@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -13,18 +14,22 @@ from app.handlers import (
     start, registration, search, profile, matches, admin, complaints, premium,
 )
 
+LOGS_DIR = Path(__file__).parent.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("logs/bot.log", encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(LOGS_DIR / "bot.log", encoding="utf-8"),
+        logging.StreamHandler(),
     ],
 )
 logger = logging.getLogger(__name__)
 
 
-async def on_startup():
+async def on_startup(bot: Bot):
+    await bot.delete_webhook()
     logger.info("Инициализация базы данных...")
     await init_db()
     logger.info("База данных готова.")

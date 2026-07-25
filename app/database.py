@@ -1,14 +1,24 @@
+from pathlib import Path
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import config
 
 
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+
+DB_PATH = DATA_DIR / "database.sqlite3"
+DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH.as_posix()}"
+
+
 class Base(DeclarativeBase):
     pass
 
 
-engine = create_async_engine(config.database_url, echo=False)
+engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

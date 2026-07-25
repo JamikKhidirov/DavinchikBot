@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from app.keyboards.profile import (
     my_gender_keyboard, gender_keyboard, confirm_keyboard, main_menu_keyboard,
 )
-from app.services.profile_service import create_profile, has_profile
+from app.services.profile_service import create_profile, has_profile, get_or_create_user
 from app.states.registration import Registration
 
 router = Router()
@@ -165,6 +165,13 @@ async def show_confirm(message: Message, state: FSMContext):
 @router.callback_query(Registration.confirm, F.data == "confirm_yes")
 async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
+
+    await get_or_create_user(
+        telegram_id=callback.from_user.id,
+        username=callback.from_user.username,
+        first_name=callback.from_user.first_name,
+        last_name=callback.from_user.last_name,
+    )
 
     await create_profile(
         telegram_id=callback.from_user.id,

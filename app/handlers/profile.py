@@ -96,21 +96,22 @@ async def edit_profile_field(callback: CallbackQuery, state: FSMContext):
         "photos": "📸 Отправьте новые фото (до 3). /done когда закончите:",
     }
 
-    if field in field_states:
+    target_state = field_states.get(field)
+    if target_state:
         await state.update_data(edit_field=field)
+        await state.set_state(target_state)
 
-        if field in ("gender", "looking_for", "photos"):
-            await state.set_state(Registration(field))
-            msg = prompts.get(field, "")
-            kb = None
-            if field == "gender":
-                kb = my_gender_keyboard()
-            elif field == "looking_for":
-                kb = gender_keyboard()
+        msg = prompts.get(field, "Введите значение:")
+        kb = None
+        if field == "gender":
+            kb = my_gender_keyboard()
+        elif field == "looking_for":
+            kb = gender_keyboard()
+
+        if kb:
             await callback.message.edit_text(msg, reply_markup=kb)
         else:
-            await state.set_state(Registration(field))
-            await callback.message.edit_text(prompts.get(field, "Введите значение:"))
+            await callback.message.edit_text(msg)
 
     await callback.answer()
 
@@ -232,11 +233,18 @@ async def request_verify(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(Registration.photos)
     await state.update_data(edit_field="verification_photo")
-    await callback.message.edit_text(
-        "📸 Отправьте фото, на котором вы держите листок с написанным"
-        "вашим Telegram @username.\n\n"
-        "Это нужно для подтверждения, что вы реальный человек."
-    )
+    try:
+        await callback.message.edit_text(
+            "📸 Отправьте фото, на котором вы держите листок с написанным"
+            "вашим Telegram @username.\n\n"
+            "Это нужно для подтверждения, что вы реальный человек."
+        )
+    except Exception:
+        await callback.message.answer(
+            "📸 Отправьте фото, на котором вы держите листок с написанным"
+            "вашим Telegram @username.\n\n"
+            "Это нужно для подтверждения, что вы реальный человек."
+        )
     await callback.answer()
 
 

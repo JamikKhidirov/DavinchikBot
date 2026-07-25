@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +17,11 @@ class Config(BaseSettings):
     boost_stars: int = 30
     provider_token: str = ""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @property
     def admin_ids_list(self) -> list[int]:
@@ -24,4 +30,4 @@ class Config(BaseSettings):
         return [int(x.strip()) for x in self.admin_ids.split(",") if x.strip()]
 
 
-config = Config()
+config = Config(_env_file=Path(__file__).parent.parent / ".env")
