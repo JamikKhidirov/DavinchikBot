@@ -1,0 +1,236 @@
+import datetime
+from typing import Optional
+
+from sqlalchemy import select, and_, or_, not_, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import User, Profile, Like, Match, Block
+from app.database import async_session
+from app.services.profile_service import get_user_by_telegram_id
+from app.config import config
+
+
+async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return False, 0
+
+        if user.is_premium:
+            return True, 999
+
+        today = datetime.datetime.utcnow().date()
+        if user.last_like_date and user.last_like_date.date() == today:
+            remaining = config.max_likes_per_day - user.daily_likes_count
+            if remaining <= 0:
+                return False, 0
+            return True, remaining
+        else:
+            user.daily_likes_count = 0
+            user.last_like_date = datetime.datetime.utcnow()
+            await session.commit()
+            return True, config.max_likes_per_day
+
+
+async def like_profile(from_telegram_id: int, to_user_id: int) -> Optional[str]:
+    async with async_session() as session:
+        from_result = await session.execute(select(User).where(User.telegram_id == from_telegram_id))
+        from_user = from_result.scalar_one_or_none()
+        if from_user is None:
+            return None
+
+        if from_user.id == to_user_id:
+            return None
+
+        result = await session.execute(
+            select(Like).where(
+                and_(Like.from_user_id == from_user.id, Like.to_user_id == to_user_id)
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return "already_exists"
+
+        from_user.daily_likes_count += 1
+        from_user.last_like_date = datetime.datetime.utcnow()
+
+        like = Like(from_user_id=from_user.id, to_user_id=to_user_id, is_like=True)
+        session.add(like)
+        await session.commit()
+
+        mutual = await session.execute(
+            select(Like).where(
+                and_(Like.from_user_id == to_user_id, Like.to_user_id == from_user.id, Like.is_like == True)
+            )
+        )
+        if mutual.scalar_one_or_none():
+            match = Match(user1_id=min(from_user.id, to_user_id), user2_id=max(from_user.id, to_user_id))
+            session.add(match)
+            await session.commit()
+            return "match"
+
+        return "liked"
+
+
+async def dislike_profile(from_telegram_id: int, to_user_id: int) -> bool:
+    async with async_session() as session:
+        from_result = await session.execute(select(User).where(User.telegram_id == from_telegram_id))
+        from_user = from_result.scalar_one_or_none()
+        if from_user is None:
+            return False
+
+        result = await session.execute(
+            select(Like).where(
+                and_(Like.from_user_id == from_user.id, Like.to_user_id == to_user_id)
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            if not existing.is_like:
+                return True
+            existing.is_like = False
+        else:
+            dislike = Like(from_user_id=from_user.id, to_user_id=to_user_id, is_like=False)
+            session.add(dislike)
+
+        await session.commit()
+        return True
+
+
+async def get_next_profile(telegram_id: int) -> Optional[dict]:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return None
+
+        profile_result = await session.execute(select(Profile).where(Profile.user_id == user.id))
+        my_profile = profile_result.scalar_one_or_none()
+        if my_profile is None:
+            return None
+
+        liked_subq = select(Like.to_user_id).where(Like.from_user_id == user.id)
+        matches_subq1 = select(Match.user2_id).where(Match.user1_id == user.id)
+        matches_subq2 = select(Match.user1_id).where(Match.user2_id == user.id)
+        blocked_by_me = select(Block.blocked_user_id).where(Block.user_id == user.id)
+        blocked_me = select(Block.user_id).where(Block.blocked_user_id == user.id)
+
+        base_filters = [
+            Profile.user_id != user.id,
+            Profile.is_active == True,
+            Profile.user_id.not_in(liked_subq),
+            Profile.user_id.not_in(matches_subq1),
+            Profile.user_id.not_in(matches_subq2),
+            Profile.user_id.not_in(blocked_by_me),
+            Profile.user_id.not_in(blocked_me),
+            Profile.age >= my_profile.age_min_preference,
+            Profile.age <= my_profile.age_max_preference,
+            or_(
+                Profile.looking_for == "all",
+                Profile.looking_for == my_profile.gender,
+            ),
+        ]
+
+        candidates = await session.execute(
+            select(Profile)
+            .where(and_(Profile.city == my_profile.city, *base_filters))
+            .order_by(Profile.is_verified.desc(), Profile.created_at.desc())
+            .limit(1)
+        )
+        candidate_profile = candidates.scalar_one_or_none()
+
+        if candidate_profile is None:
+            candidates = await session.execute(
+                select(Profile)
+                .where(and_(*base_filters))
+                .order_by(Profile.is_verified.desc(), Profile.created_at.desc())
+                .limit(1)
+            )
+            candidate_profile = candidates.scalar_one_or_none()
+            if candidate_profile is None:
+                return None
+
+        candidate_user = await session.execute(select(User).where(User.id == candidate_profile.user_id))
+        candidate_user = candidate_user.scalar_one_or_none()
+
+        candidate_profile.views_count = (candidate_profile.views_count or 0) + 1
+        await session.commit()
+
+        return {
+            "id": candidate_user.id,
+            "telegram_id": candidate_user.telegram_id,
+            "name": candidate_profile.name,
+            "age": candidate_profile.age,
+            "gender": candidate_profile.gender,
+            "city": candidate_profile.city,
+            "bio": candidate_profile.bio or "",
+            "photos": candidate_profile.photos or [],
+            "is_verified": candidate_profile.is_verified,
+        }
+
+
+async def get_matches(telegram_id: int) -> list[dict]:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return []
+
+        matches = await session.execute(
+            select(Match).where(
+                or_(Match.user1_id == user.id, Match.user2_id == user.id)
+            )
+        )
+        match_list = []
+        for match in matches.scalars().all():
+            matched_user_id = match.user2_id if match.user1_id == user.id else match.user1_id
+            matched_user = await session.execute(select(User).where(User.id == matched_user_id))
+            matched_user = matched_user.scalar_one_or_none()
+            matched_profile = await session.execute(
+                select(Profile).where(Profile.user_id == matched_user_id)
+            )
+            matched_profile = matched_profile.scalar_one_or_none()
+
+            if matched_user and matched_profile:
+                match_list.append({
+                    "id": matched_user.id,
+                    "telegram_id": matched_user.telegram_id,
+                    "username": matched_user.username,
+                    "name": matched_profile.name,
+                    "age": matched_profile.age,
+                    "city": matched_profile.city,
+                    "photo": matched_profile.photos[0] if matched_profile.photos else None,
+                    "matched_at": match.created_at,
+                })
+        return match_list
+
+
+async def unmatch(telegram_id: int, target_user_id: int) -> bool:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return False
+
+        u1, u2 = min(user.id, target_user_id), max(user.id, target_user_id)
+        await session.execute(
+            delete(Match).where(and_(Match.user1_id == u1, Match.user2_id == u2))
+        )
+        await session.commit()
+        return True
+
+
+async def complaint(from_telegram_id: int, target_user_id: int, reason: str) -> bool:
+    from app.models.complaint import Complaint
+
+    async with async_session() as session:
+        from_result = await session.execute(select(User).where(User.telegram_id == from_telegram_id))
+        from_user = from_result.scalar_one_or_none()
+        if from_user is None:
+            return False
+
+        complaint = Complaint(from_user_id=from_user.id, complained_user_id=target_user_id, reason=reason)
+        session.add(complaint)
+        await session.commit()
+        return True

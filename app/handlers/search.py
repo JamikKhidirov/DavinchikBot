@@ -1,0 +1,167 @@
+from aiogram import Router, F
+from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+
+from app.keyboards.profile import profile_action_keyboard, main_menu_keyboard
+from app.services.matching_service import get_next_profile, like_profile, dislike_profile, check_like_limit
+from app.services.ad_service import get_active_ads, increment_impression
+from app.services.profile_service import get_user_by_telegram_id, has_profile, is_banned, get_user_by_id, get_profile_by_telegram_id
+from app.services.notification_service import notify_like, notify_match
+from app.config import config
+
+router = Router()
+user_swipe_count = {}
+
+
+@router.callback_query(F.data == "search")
+async def start_search(callback: CallbackQuery):
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        await callback.answer()
+        return
+
+    if not await has_profile(callback.from_user.id):
+        await callback.message.edit_text(
+            "Сначала создайте анкету через /register",
+            reply_markup=main_menu_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    user_swipe_count[callback.from_user.id] = 0
+    await show_next_profile(callback)
+
+
+async def show_next_profile(callback: CallbackQuery):
+    profile_data = await get_next_profile(callback.from_user.id)
+
+    if profile_data is None:
+        await callback.message.edit_text(
+            "👀 Анкеты закончились. Попробуй изменить настройки поиска!",
+            reply_markup=main_menu_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    user_swipe_count[callback.from_user.id] = user_swipe_count.get(callback.from_user.id, 0) + 1
+
+    verified_badge = "✅ Верифицирован(а)\n" if profile_data.get("is_verified") else ""
+    profile_text = (
+        f"{verified_badge}"
+        f"{profile_data['name']}, {profile_data['age']}, {profile_data['city']}\n"
+        f"{profile_data['bio']}"
+    )
+
+    ads = await get_active_ads()
+    if ads and user_swipe_count[callback.from_user.id] % config.swipe_before_ad == 0:
+        ad = ads[(user_swipe_count[callback.from_user.id] // config.swipe_before_ad - 1) % len(ads)]
+        await increment_impression(ad.id)
+        text = f"📢 Реклама\n\n{ad.text}\n\n---\n\n{profile_text}"
+        kb = profile_action_keyboard(profile_data["id"])
+        if profile_data["photos"]:
+            await callback.message.answer_photo(profile_data["photos"][0], caption=text, reply_markup=kb)
+        else:
+            await callback.message.answer(text, reply_markup=kb)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+    else:
+        text = profile_text
+        if profile_data["photos"]:
+            await callback.message.answer_photo(profile_data["photos"][0], caption=text, reply_markup=profile_action_keyboard(profile_data["id"]))
+        else:
+            await callback.message.edit_text(text, reply_markup=profile_action_keyboard(profile_data["id"]))
+        if callback.message.text != text:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("like_"))
+async def process_like(callback: CallbackQuery):
+    target_id = int(callback.data.split("_")[1])
+
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        await callback.answer()
+        return
+
+    can_like, remaining = await check_like_limit(callback.from_user.id)
+    if not can_like:
+        await callback.message.answer(
+            "❌ Дневной лимит лайков исчерпан (30/30).\n"
+            "Завтра лимит обновится. Оформи ⭐ Премиум для безлимитных лайков!",
+        )
+        await callback.answer()
+        return
+
+    result = await like_profile(callback.from_user.id, target_id)
+
+    if result == "match":
+        target_user = await get_user_by_id(target_id)
+        my_user = await get_user_by_telegram_id(callback.from_user.id)
+        my_profile = await get_profile_by_telegram_id(callback.from_user.id)
+
+        if target_user and my_user and my_profile:
+            target_profile = await get_profile_by_telegram_id(target_user.telegram_id)
+            match_info = {
+                "name": my_profile.name,
+                "age": my_profile.age,
+                "city": my_profile.city,
+                "username": my_user.username or "",
+                "name2": target_profile.name if target_profile else "",
+                "age2": target_profile.age if target_profile else 0,
+                "city2": target_profile.city if target_profile else "",
+                "username2": target_user.username or "",
+            }
+            await notify_match(callback.bot, callback.from_user.id, target_user.telegram_id, match_info)
+
+        await callback.message.answer(
+            "💕 Взаимная симпатия! Это совпадение!\n"
+            "Посмотри свои совпадения в меню.",
+        )
+    elif result == "liked":
+        target_user = await get_user_by_id(target_id)
+        if target_user:
+            await notify_like(callback.bot, target_user.telegram_id, "")
+
+        if remaining and remaining <= 5:
+            await callback.message.answer(
+                f"⚠️ Осталось {remaining} лайков на сегодня. ⭐ Премиум — без лимитов!",
+            )
+
+    await show_next_profile(callback)
+
+
+@router.callback_query(F.data.startswith("dislike_"))
+async def process_dislike(callback: CallbackQuery):
+    target_id = int(callback.data.split("_")[1])
+
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        await callback.answer()
+        return
+
+    await dislike_profile(callback.from_user.id, target_id)
+    await show_next_profile(callback)
+
+
+@router.callback_query(F.data.startswith("block_"))
+async def process_block(callback: CallbackQuery):
+    from app.services.block_service import block_user
+
+    target_id = int(callback.data.split("_")[1])
+
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        await callback.answer()
+        return
+
+    await block_user(callback.from_user.id, target_id)
+    await callback.message.answer("🚫 Пользователь заблокирован. Его анкеты больше не будут показываться.")
+    await callback.answer()
+    await show_next_profile(callback)
