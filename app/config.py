@@ -9,6 +9,12 @@ class Config(BaseSettings):
     max_likes_per_day: int = 30
     inactive_days_before_hide: int = 30
 
+    premium_1m_stars: int = 50
+    premium_3m_stars: int = 120
+    premium_lifetime_stars: int = 300
+    boost_stars: int = 30
+    provider_token: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     @property

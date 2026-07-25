@@ -20,6 +20,8 @@ class Profile(Base):
     photos: Mapped[list] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_boosted: Mapped[bool] = mapped_column(Boolean, default=False)
+    boost_expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
     verification_photo_id: Mapped[str] = mapped_column(String(512), nullable=True)
     views_count: Mapped[int] = mapped_column(Integer, default=0)
     age_min_preference: Mapped[int] = mapped_column(Integer, default=18)

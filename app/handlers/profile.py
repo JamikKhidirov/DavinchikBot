@@ -270,9 +270,11 @@ async def handle_verify_photo(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "settings")
 async def show_settings(callback: CallbackQuery):
+    user = await get_user_by_telegram_id(callback.from_user.id)
+    is_premium = user and user.is_premium
     await callback.message.edit_text(
         "⚙️ Настройки:",
-        reply_markup=settings_keyboard(),
+        reply_markup=settings_keyboard(is_premium=is_premium),
     )
     await callback.answer()
 

@@ -132,24 +132,34 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             ),
         ]
 
+        def sort_exprs(city_filter=True):
+            exprs = [
+                Profile.is_boosted.desc(),
+                Profile.is_verified.desc(),
+            ]
+            return exprs
+
         candidates = await session.execute(
             select(Profile)
             .where(and_(Profile.city == my_profile.city, *base_filters))
-            .order_by(Profile.is_verified.desc(), Profile.created_at.desc())
-            .limit(1)
+            .order_by(*sort_exprs(), Profile.created_at.desc())
+            .limit(5)
         )
-        candidate_profile = candidates.scalar_one_or_none()
+        candidates_list = list(candidates.scalars().all())
 
-        if candidate_profile is None:
+        if not candidates_list:
             candidates = await session.execute(
                 select(Profile)
                 .where(and_(*base_filters))
-                .order_by(Profile.is_verified.desc(), Profile.created_at.desc())
-                .limit(1)
+                .order_by(*sort_exprs(False), Profile.created_at.desc())
+                .limit(5)
             )
-            candidate_profile = candidates.scalar_one_or_none()
-            if candidate_profile is None:
-                return None
+            candidates_list = list(candidates.scalars().all())
+
+        if not candidates_list:
+            return None
+
+        candidate_profile = _pick_best_match(candidates_list, my_profile)
 
         candidate_user = await session.execute(select(User).where(User.id == candidate_profile.user_id))
         candidate_user = candidate_user.scalar_one_or_none()
@@ -167,7 +177,39 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             "bio": candidate_profile.bio or "",
             "photos": candidate_profile.photos or [],
             "is_verified": candidate_profile.is_verified,
+            "is_boosted": candidate_profile.is_boosted,
         }
+
+
+def _pick_best_match(candidates: list[Profile], my_profile: Profile) -> Profile:
+    scored = []
+    for p in candidates:
+        score = 0.0
+        age_diff = abs(p.age - my_profile.age)
+        if age_diff <= 3:
+            score += 30
+        elif age_diff <= 7:
+            score += 20
+        elif age_diff <= 15:
+            score += 10
+        else:
+            score += 2
+
+        if p.looking_for == my_profile.gender or p.looking_for == "all":
+            score += 15
+
+        if p.is_boosted:
+            score += 50
+        if p.is_verified:
+            score += 10
+
+        if p.city == my_profile.city:
+            score += 20
+
+        scored.append((score, p))
+
+    scored.sort(key=lambda x: -x[0])
+    return scored[0][1]
 
 
 async def get_matches(telegram_id: int) -> list[dict]:

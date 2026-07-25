@@ -39,6 +39,14 @@ async def on_startup():
     if deactivated:
         logger.info(f"Скрыто неактивных анкет: {deactivated}")
 
+    from app.services.premium_service import check_premium_expired, check_boost_expired
+    expired_premium = await check_premium_expired()
+    expired_boost = await check_boost_expired()
+    if expired_premium:
+        logger.info(f"Истекших премиум-подписок: {expired_premium}")
+    if expired_boost:
+        logger.info(f"Истекших бустов: {expired_boost}")
+
     from app.setup_bot import setup_bot
     await setup_bot(bot)
     logger.info("Бот запущен!")

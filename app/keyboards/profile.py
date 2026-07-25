@@ -45,10 +45,12 @@ def edit_profile_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def settings_keyboard() -> InlineKeyboardMarkup:
+def settings_keyboard(is_premium: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🎯 Настройки поиска", callback_data="search_settings")
     builder.button(text="⭐ Премиум", callback_data="premium")
+    if is_premium:
+        builder.button(text="🚀 Буст анкеты", callback_data="boost_anketa")
     builder.button(text="🚫 Заблокированные", callback_data="blocked_list")
     builder.button(text="🏠 На главную", callback_data="main_menu")
     builder.adjust(1)
