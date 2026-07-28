@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Integer, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -18,6 +18,8 @@ class Like(Base):
     from_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     to_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     is_like: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_superlike: Mapped[bool] = mapped_column(Boolean, default=False)
+    superlike_message: Mapped[str] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
     from_user = relationship("User", foreign_keys=[from_user_id], back_populates="likes_given")

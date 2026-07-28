@@ -2,10 +2,12 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.profile import (
     my_gender_keyboard, gender_keyboard, confirm_keyboard, main_menu_keyboard,
 )
+from app.models.profile import INTEREST_CHOICES
 from app.services.profile_service import create_profile, has_profile, get_or_create_user
 from app.states.registration import Registration
 
@@ -95,8 +97,38 @@ async def process_city(message: Message, state: FSMContext):
 async def process_bio(message: Message, state: FSMContext):
     bio = message.text.strip() if message.text.strip() != "-" else ""
     await state.update_data(bio=bio)
-    await state.set_state(Registration.photos)
+    await state.set_state(Registration.interests)
+    from app.keyboards.profile import interests_keyboard
     await message.answer(
+        "🎯 Выбери свои интересы (можно несколько):\n"
+        "Нажимай на кнопки, потом нажми ✅ Готово.",
+        reply_markup=interests_keyboard([]),
+    )
+
+
+@router.callback_query(Registration.interests, F.data.startswith("interest_"))
+async def process_interest_toggle(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    selected = list(data.get("interests", []))
+    interest = callback.data.replace("interest_", "")
+    if interest in selected:
+        selected.remove(interest)
+    else:
+        selected.append(interest)
+    await state.update_data(interests=selected)
+    from app.keyboards.profile import interests_keyboard
+    try:
+        await callback.message.edit_reply_markup(reply_markup=interests_keyboard(selected))
+    except Exception:
+        pass
+
+
+@router.callback_query(Registration.interests, F.data == "interests_done")
+async def process_interests_done(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(Registration.photos)
+    await callback.message.answer(
         "📸 Отправь до 3 фото и/или видео (по одному).\n"
         "Когда закончишь, нажми /done.\n"
         "Или отправь '-' чтобы пропустить."
@@ -159,6 +191,8 @@ async def show_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
     gender_map = {"male": "👨 Мужской", "female": "👩 Женский"}
     looking_map = {"male": "👨 Мужчин", "female": "👩 Женщин", "all": "👫 Всех"}
+    interests = data.get("interests", [])
+    interests_text = ", ".join(interests) if interests else "—"
 
     text = (
         "📋 Проверь свою анкету:\n\n"
@@ -168,6 +202,7 @@ async def show_confirm(message: Message, state: FSMContext):
         f"🔍 Ищу: {looking_map.get(data.get('looking_for', ''), data.get('looking_for'))}\n"
         f"🏙 Город: {data.get('city')}\n"
         f"📄 О себе: {data.get('bio') or '—'}\n"
+        f"🎯 Интересы: {interests_text}\n"
         f"📸 Фото: {len(data.get('photos', []))} | 🎬 Видео: {len(data.get('videos', []))}\n\n"
         "Всё верно?"
     )
@@ -198,6 +233,7 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
             bio=data.get("bio", ""),
             photos=data.get("photos", []),
             videos=data.get("videos", []),
+            interests=data.get("interests", []),
         )
     except Exception:
         await callback.message.answer("❌ Ошибка при создании анкеты. Попробуйте позже.")

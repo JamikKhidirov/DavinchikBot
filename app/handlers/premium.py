@@ -36,6 +36,7 @@ async def show_premium(callback: CallbackQuery):
     builder.button(text="💎 1 месяц — 50 ⭐", callback_data="buy_premium_1m")
     builder.button(text="💎 3 месяца — 120 ⭐", callback_data="buy_premium_3m")
     builder.button(text="💎 Навсегда — 300 ⭐", callback_data="buy_premium_lifetime")
+    builder.button(text="📢 Рекламный баннер на 30 дней — 200 ⭐", callback_data="buy_ad_banner")
     builder.button(text="🏠 На главную", callback_data="main_menu")
     builder.adjust(1)
 
@@ -51,6 +52,9 @@ async def show_premium(callback: CallbackQuery):
         "🚀 <b>Буст анкеты</b> — ты в начале поиска\n"
         "👀 <b>Кто лайкнул</b> — смотри список\n"
         "🎨 <b>Приоритетная поддержка</b>\n\n"
+        "—\n"
+        "📢 <b>Рекламный баннер</b> — 200 ⭐ за 30 дней\n"
+        "Показывается пользователям в ленте поиска\n\n"
         "Оплата через ⭐ Telegram Stars"
     )
     await safe_edit(callback, text, reply_markup=builder.as_markup())
@@ -68,6 +72,18 @@ async def buy_premium(callback: CallbackQuery):
     if not params:
         return
 
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer_invoice(**params)
+
+
+@router.callback_query(F.data == "buy_ad_banner")
+async def buy_ad_banner(callback: CallbackQuery):
+    await callback.answer()
+    from app.services.ads_purchase_service import get_ad_banner_invoice_params
+    params = get_ad_banner_invoice_params(callback.from_user.id)
     try:
         await callback.message.delete()
     except Exception:
@@ -138,6 +154,42 @@ async def successful_payment(message: Message):
             )
         else:
             await message.answer("❌ Ошибка активации буста.", reply_markup=main_menu_keyboard())
+
+    elif payload.startswith("gift_"):
+        parts = payload.split("_", 4)
+        gift_type = parts[1]
+        to_user_id = int(parts[3])
+        msg_text = parts[4] if len(parts) > 4 else ""
+        from app.services.gift_service import send_gift
+        gift = await send_gift(telegram_id, to_user_id, gift_type, msg_text)
+        if gift:
+            from app.models.gift import GIFT_OPTIONS
+            gift_info = GIFT_OPTIONS.get(gift_type, {})
+            await message.answer(
+                f"✅ Подарок {gift_info.get('label', gift_type)} отправлен!",
+                reply_markup=main_menu_keyboard(),
+            )
+            try:
+                to_user = await get_user_by_id(to_user_id)
+                if to_user:
+                    my_profile = await get_profile_by_telegram_id(telegram_id)
+                    name = my_profile.name if my_profile else "Пользователь"
+                    await message.bot.send_message(
+                        to_user.telegram_id,
+                        f"🎁 Вы получили подарок {gift_info.get('label', gift_type)} от {name}!"
+                        + (f"\n💬 {msg_text}" if msg_text else ""),
+                    )
+            except Exception:
+                pass
+        else:
+            await message.answer("❌ Ошибка отправки подарка.", reply_markup=main_menu_keyboard())
+
+    elif payload.startswith("ad_banner_"):
+        await message.answer(
+            "✅ Рекламный баннер оплачен! Скоро он появится в ленте пользователей.\n"
+            "Свяжитесь с администратором для уточнения деталей.",
+            reply_markup=main_menu_keyboard(),
+        )
 
 
 @router.callback_query(F.data == "blocked_list")

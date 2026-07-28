@@ -28,7 +28,22 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         from sqlalchemy import text
-        try:
-            await conn.execute(text("ALTER TABLE profiles ADD COLUMN videos JSON DEFAULT '[]'"))
-        except Exception:
-            pass
+        migrations = [
+            "ALTER TABLE profiles ADD COLUMN videos JSON DEFAULT '[]'",
+            "ALTER TABLE profiles ADD COLUMN interests JSON DEFAULT '[]'",
+            "ALTER TABLE profiles ADD COLUMN latitude FLOAT",
+            "ALTER TABLE profiles ADD COLUMN longitude FLOAT",
+            "ALTER TABLE profiles ADD COLUMN search_radius INTEGER DEFAULT 300",
+            "ALTER TABLE users ADD COLUMN referral_code VARCHAR(16)",
+            "ALTER TABLE users ADD COLUMN referred_by_id INTEGER",
+            "ALTER TABLE users ADD COLUMN extra_likes INTEGER DEFAULT 0",
+            "ALTER TABLE likes ADD COLUMN is_superlike BOOLEAN DEFAULT 0",
+            "ALTER TABLE likes ADD COLUMN superlike_message VARCHAR(256)",
+            "ALTER TABLE payments ADD COLUMN currency VARCHAR(16) DEFAULT 'XTR'",
+            "ALTER TABLE payments ADD COLUMN description TEXT",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass

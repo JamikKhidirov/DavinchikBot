@@ -1,5 +1,7 @@
 import datetime
 
+import secrets
+
 from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -8,6 +10,10 @@ from app.database import Base
 
 def _utcnow():
     return datetime.datetime.now(datetime.UTC)
+
+
+def _gen_ref_code():
+    return secrets.token_hex(4).upper()
 
 
 class User(Base):
@@ -25,6 +31,9 @@ class User(Base):
     daily_likes_count: Mapped[int] = mapped_column(Integer, default=0)
     last_like_date: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
     last_active_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+    referral_code: Mapped[str] = mapped_column(String(16), unique=True, default=_gen_ref_code)
+    referred_by_id: Mapped[int] = mapped_column(Integer, nullable=True)
+    extra_likes: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow

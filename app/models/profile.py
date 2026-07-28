@@ -1,10 +1,15 @@
 import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, JSON, ForeignKey
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+INTEREST_CHOICES = [
+    "Спорт", "Музыка", "Кино", "Книги", "Путешествия",
+    "Игры", "Фото", "Кулинария", "Рисование", "IT",
+    "Танцы", "Йога", "Языки", "Волонтёрство", "Авто",
+]
 
 def _utcnow():
     return datetime.datetime.now(datetime.UTC)
@@ -31,6 +36,10 @@ class Profile(Base):
     views_count: Mapped[int] = mapped_column(Integer, default=0)
     age_min_preference: Mapped[int] = mapped_column(Integer, default=18)
     age_max_preference: Mapped[int] = mapped_column(Integer, default=99)
+    interests: Mapped[list] = mapped_column(JSON, default=list)
+    latitude: Mapped[float] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float] = mapped_column(Float, nullable=True)
+    search_radius: Mapped[int] = mapped_column(Integer, default=300)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow

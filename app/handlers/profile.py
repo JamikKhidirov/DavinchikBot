@@ -6,11 +6,14 @@ from aiogram.fsm.context import FSMContext
 from app.keyboards.profile import (
     edit_profile_keyboard, main_menu_keyboard, my_gender_keyboard,
     gender_keyboard, settings_keyboard, search_settings_keyboard,
+    interests_keyboard, referral_keyboard,
 )
 from app.services.profile_service import (
     get_profile_by_telegram_id, update_profile, has_profile, is_banned,
     get_profile_stats, request_verification, get_user_by_telegram_id,
 )
+from app.services.geo_service import update_location, update_search_radius
+from app.services.referral_service import get_or_create_referral_code, get_referral_stats
 from app.states.edit_profile import EditProfile, Verification
 
 router = Router()
@@ -43,6 +46,7 @@ async def show_my_profile(callback: CallbackQuery):
 
     verified_badge = "✅ Верифицирован(а)" if profile.is_verified else "❌ Не верифицирован(а)"
     premium_badge = "⭐ Премиум" if user and user.is_premium else "👤 Бесплатный"
+    interests_text = ", ".join(profile.interests or []) if profile.interests else "—"
 
     text = (
         "📝 Твоя анкета:\n\n"
@@ -52,6 +56,7 @@ async def show_my_profile(callback: CallbackQuery):
         f"🔍 Ищу: {looking_map.get(profile.looking_for, profile.looking_for)}\n"
         f"🏙 Город: {profile.city}\n"
         f"📄 О себе: {profile.bio or '—'}\n"
+        f"🎯 Интересы: {interests_text}\n"
         f"📸 Фото: {len(profile.photos or [])} | 🎬 Видео: {len(profile.videos or [])}\n"
         f"{verified_badge} | {premium_badge}\n\n"
         f"📊 Статистика:\n"
@@ -138,16 +143,22 @@ async def update_name(message: Message, state: FSMContext):
 
 @router.message(EditProfile.age)
 async def update_age(message: Message, state: FSMContext):
+    data = await state.get_data()
+    field = data.get("edit_field", "age")
     try:
         val = int(message.text)
-        if val < 16 or val > 99:
-            raise ValueError
+        if field == "search_radius":
+            if val < 1 or val > 1000:
+                await message.answer("Введите число от 1 до 1000:")
+                return
+            await update_search_radius(message.from_user.id, val)
+        else:
+            if val < 16 or val > 99:
+                raise ValueError
+            await update_profile(message.from_user.id, **{field: val})
     except ValueError:
         await message.answer("Введите число от 16 до 99:")
         return
-    data = await state.get_data()
-    field = data.get("edit_field", "age")
-    await update_profile(message.from_user.id, **{field: val})
     await state.clear()
     await message.answer("✅ Обновлено!", reply_markup=main_menu_keyboard())
 
@@ -346,3 +357,191 @@ async def set_city(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("🏙 Введите город:")
     except Exception:
         await callback.message.answer("🏙 Введите город:")
+
+
+@router.callback_query(F.data == "set_radius")
+async def set_radius(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(edit_field="search_radius")
+    await state.set_state(EditProfile.age)
+    try:
+        await callback.message.edit_text("🗺 Радиус поиска в км (от 1 до 1000):")
+    except Exception:
+        await callback.message.answer("🗺 Радиус поиска в км (от 1 до 1000):")
+
+
+@router.callback_query(F.data == "set_location")
+async def set_location(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            "📍 Отправьте свою геопозицию кнопкой 📎 -> 📍 Геопозиция\n\n"
+            "Или напишите название города вручную через настройки города."
+        )
+    except Exception:
+        await callback.message.answer(
+            "📍 Отправьте свою геопозицию кнопкой 📎 -> 📍 Геопозиция\n\n"
+            "Или напишите название города вручную через настройки города."
+        )
+
+
+@router.message(F.location)
+async def handle_location(message: Message):
+    if message.location:
+        ok = await update_location(message.from_user.id, message.location.latitude, message.location.longitude)
+        if ok:
+            await message.answer("✅ Геопозиция обновлена!", reply_markup=main_menu_keyboard())
+        else:
+            await message.answer("❌ Сначала создайте анкету через /register")
+
+
+@router.callback_query(F.data == "edit_interests")
+async def edit_interests_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    profile = await get_profile_by_telegram_id(callback.from_user.id)
+    if profile is None:
+        await callback.message.answer("Сначала создайте анкету.")
+        return
+    selected = list(profile.interests or [])
+    await state.set_state(EditProfile.interests)
+    await state.update_data(edit_field="interests", interests=selected)
+    try:
+        await callback.message.edit_text(
+            "🎯 Выбери свои интересы:",
+            reply_markup=interests_keyboard(selected),
+        )
+    except Exception:
+        await callback.message.answer(
+            "🎯 Выбери свои интересы:",
+            reply_markup=interests_keyboard(selected),
+        )
+
+
+@router.callback_query(EditProfile.interests, F.data.startswith("interest_"))
+async def edit_interest_toggle(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    selected = list(data.get("interests", []))
+    interest = callback.data.replace("interest_", "")
+    if interest in selected:
+        selected.remove(interest)
+    else:
+        selected.append(interest)
+    await state.update_data(interests=selected)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=interests_keyboard(selected))
+    except Exception:
+        pass
+
+
+@router.callback_query(EditProfile.interests, F.data == "interests_done")
+async def edit_interests_done(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    selected = data.get("interests", [])
+    await update_profile(callback.from_user.id, interests=selected)
+    await state.clear()
+    try:
+        await callback.message.edit_text("✅ Интересы обновлены!", reply_markup=main_menu_keyboard())
+    except Exception:
+        await callback.message.answer("✅ Интересы обновлены!", reply_markup=main_menu_keyboard())
+
+
+@router.callback_query(F.data == "referral")
+async def show_referral(callback: CallbackQuery):
+    await callback.answer()
+    code = await get_or_create_referral_code(callback.from_user.id)
+    stats = await get_referral_stats(callback.from_user.id)
+    bot_username = (await callback.bot.me()).username
+    link = f"https://t.me/{bot_username}?start=ref_{code}"
+
+    text = (
+        "🔗 Реферальная программа\n\n"
+        f"Твоя ссылка: {link}\n\n"
+        "🔸 Приведи друзей и получи +5 лайков за каждого!\n"
+        "🔸 Друг тоже получает бонус\n\n"
+        f"📊 Приведено друзей: {stats['count']}\n"
+        f"💎 Бонусных лайков: {stats['bonus_likes']}"
+    )
+    await safe_edit(callback, text, reply_markup=referral_keyboard(code))
+
+
+@router.callback_query(F.data == "referral_stats")
+async def show_referral_stats(callback: CallbackQuery):
+    await callback.answer()
+    stats = await get_referral_stats(callback.from_user.id)
+    await safe_edit(callback,
+        f"📊 Реферальная статистика:\n\n"
+        f"👥 Приведено: {stats['count']}\n"
+        f"💎 Бонусных лайков: {stats['bonus_likes']}\n"
+        f"🔗 Код: {stats['code']}",
+        reply_markup=referral_keyboard(stats['code']),
+    )
+
+
+@router.callback_query(F.data == "copy_referral_link")
+async def copy_referral_link(callback: CallbackQuery):
+    await callback.answer("Скопируйте ссылку из сообщения выше и отправьте другу!", show_alert=True)
+
+
+@router.callback_query(F.data == "profile_stats")
+async def show_profile_stats(callback: CallbackQuery):
+    await callback.answer()
+    from app.database import async_session
+    from sqlalchemy import select, func, and_, or_
+    from app.models import User, Profile, Like, Match
+    import datetime
+
+    async with async_session() as session:
+        user = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
+        user = user.scalar_one_or_none()
+        if user is None:
+            return
+
+        profile = await session.execute(select(Profile).where(Profile.user_id == user.id))
+        profile = profile.scalar_one_or_none()
+        if profile is None:
+            return
+
+        now = datetime.datetime.now(datetime.UTC)
+        week_ago = now - datetime.timedelta(days=7)
+        month_ago = now - datetime.timedelta(days=30)
+
+        likes_rec_week = (
+            await session.execute(
+                select(func.count(Like.id))
+                .where(and_(Like.to_user_id == user.id, Like.is_like == True, Like.created_at >= week_ago))
+            )
+        ).scalar() or 0
+
+        likes_rec_month = (
+            await session.execute(
+                select(func.count(Like.id))
+                .where(and_(Like.to_user_id == user.id, Like.is_like == True, Like.created_at >= month_ago))
+            )
+        ).scalar() or 0
+
+        likes_rec_total = (
+            await session.execute(
+                select(func.count(Like.id))
+                .where(and_(Like.to_user_id == user.id, Like.is_like == True))
+            )
+        ).scalar() or 0
+
+        matches_total = (
+            await session.execute(
+                select(func.count(Match.id))
+                .where(or_(Match.user1_id == user.id, Match.user2_id == user.id))
+            )
+        ).scalar() or 0
+
+        text = (
+            f"📊 Статистика анкеты\n\n"
+            f"👁 Просмотров всего: {profile.views_count or 0}\n\n"
+            f"❤️ Получено лайков:\n"
+            f"  • За неделю: {likes_rec_week}\n"
+            f"  • За месяц: {likes_rec_month}\n"
+            f"  • Всего: {likes_rec_total}\n\n"
+            f"💕 Совпадений всего: {matches_total}"
+        )
+        await safe_edit(callback, text, reply_markup=main_menu_keyboard())

@@ -33,7 +33,7 @@ async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
             return True, config.max_likes_per_day
 
 
-async def like_profile(from_telegram_id: int, to_user_id: int) -> Optional[str]:
+async def like_profile(from_telegram_id: int, to_user_id: int, is_superlike: bool = False, superlike_message: str = None) -> Optional[str]:
     async with async_session() as session:
         from_result = await session.execute(select(User).where(User.telegram_id == from_telegram_id))
         from_user = from_result.scalar_one_or_none()
@@ -52,10 +52,17 @@ async def like_profile(from_telegram_id: int, to_user_id: int) -> Optional[str]:
         if existing:
             return "already_exists"
 
-        from_user.daily_likes_count += 1
-        from_user.last_like_date = datetime.datetime.now(UTC)
+        if not is_superlike:
+            from_user.daily_likes_count += 1
+            from_user.last_like_date = datetime.datetime.now(UTC)
 
-        like = Like(from_user_id=from_user.id, to_user_id=to_user_id, is_like=True)
+        like = Like(
+            from_user_id=from_user.id,
+            to_user_id=to_user_id,
+            is_like=True,
+            is_superlike=is_superlike,
+            superlike_message=superlike_message if is_superlike else None,
+        )
         session.add(like)
         await session.commit()
 
@@ -226,6 +233,24 @@ def _pick_best_match(candidates: list[Profile], my_profile: Profile) -> Profile:
 
         if p.city == my_profile.city:
             score += 20
+
+        my_interests = set(my_profile.interests or [])
+        p_interests = set(p.interests or [])
+        common = len(my_interests & p_interests)
+        if common > 0:
+            score += common * 10
+
+        if my_profile.latitude and my_profile.longitude and p.latitude and p.longitude:
+            from app.services.geo_service import haversine_km
+            dist = haversine_km(my_profile.latitude, my_profile.longitude, p.latitude, p.longitude)
+            if dist <= 10:
+                score += 25
+            elif dist <= 50:
+                score += 15
+            elif dist <= my_profile.search_radius:
+                score += 5
+            else:
+                score -= 10
 
         scored.append((score, p))
 

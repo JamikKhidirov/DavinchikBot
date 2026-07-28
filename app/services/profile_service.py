@@ -54,6 +54,7 @@ async def create_profile(
     bio: str,
     photos: list,
     videos: list = None,
+    interests: list = None,
     age_min: int = 18,
     age_max: int = 99,
 ) -> Profile:
@@ -73,6 +74,7 @@ async def create_profile(
             bio=bio,
             photos=photos,
             videos=videos or [],
+            interests=interests or [],
             age_min_preference=age_min,
             age_max_preference=age_max,
         )

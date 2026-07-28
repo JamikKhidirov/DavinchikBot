@@ -21,12 +21,26 @@ async def cmd_start(message: Message):
         await message.answer("🚫 Вы забанены в боте.")
         return
 
+    ref_code = None
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith("ref_"):
+        ref_code = args[1][4:]
+
     await get_or_create_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
         last_name=message.from_user.last_name,
     )
+
+    if ref_code:
+        from app.services.referral_service import apply_referral
+        result = await apply_referral(message.from_user.id, ref_code)
+        if result == "ok":
+            await message.answer(
+                "🎉 Вас пригласил друг! Вы получили бонусные лайки. "
+                "Приводите друзей и получайте ещё больше!"
+            )
 
     await update_last_active(message.from_user.id)
 

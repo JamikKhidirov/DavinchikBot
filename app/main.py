@@ -12,6 +12,7 @@ from app.database import init_db, engine
 from app.middlewares.throttling import ThrottlingMiddleware
 from app.handlers import (
     start, registration, search, profile, matches, admin, complaints, premium, anonymous,
+    chat, gifts,
 )
 
 LOGS_DIR = Path(__file__).parent.parent / "logs"
@@ -82,6 +83,8 @@ async def main():
     dp.include_router(complaints.router)
     dp.include_router(premium.router)
     dp.include_router(anonymous.router)
+    dp.include_router(chat.router)
+    dp.include_router(gifts.router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

@@ -8,5 +8,6 @@ class Registration(StatesGroup):
     looking_for = State()
     city = State()
     bio = State()
+    interests = State()
     photos = State()
     confirm = State()

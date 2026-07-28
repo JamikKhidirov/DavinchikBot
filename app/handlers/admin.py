@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from app.config import config
-from app.keyboards.admin import admin_keyboard, ads_management_keyboard
+from app.keyboards.admin import admin_keyboard, ads_management_keyboard, admin_grant_keyboard
 from app.keyboards.profile import main_menu_keyboard, confirm_keyboard
 from app.services.profile_service import (
     get_all_users, get_user_by_telegram_id,
@@ -45,7 +45,11 @@ async def safe_edit(callback: CallbackQuery, text: str, reply_markup=None):
 async def cmd_admin(message: Message):
     from app.services.profile_service import set_admin
     await set_admin(message.from_user.id, True)
-    await message.answer("👑 Админ-панель:", reply_markup=admin_keyboard())
+    text = (
+        "👑 Админ-панель:\n\n"
+        f"📢 Частота рекламы: каждые {config.swipe_before_ad} свайпов"
+    )
+    await message.answer(text, reply_markup=admin_keyboard())
 
 
 @router.message(Command("admin_ban"))
@@ -130,6 +134,24 @@ async def admin_userinfo_cmd(message: Message):
     else:
         text += "\n📝 Анкета: отсутствует"
     await message.answer(text)
+
+
+@router.message(Command("admin_ad_freq"))
+@admin_required
+async def admin_ad_freq_cmd(message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer(f"Текущая частота рекламы: каждые {config.swipe_before_ad} свайпов.\nИспользование: /admin_ad_freq <число>")
+        return
+    try:
+        val = int(args[1].strip())
+        if val < 1:
+            raise ValueError
+    except ValueError:
+        await message.answer("Укажите число больше 0.")
+        return
+    config.swipe_before_ad = val
+    await message.answer(f"✅ Частота рекламы изменена: каждые {val} свайпов.")
 
 
 @router.message(Command("admin_deleteprofile"))
@@ -324,6 +346,7 @@ async def ad_detail(callback: CallbackQuery):
         text="❌ Отключить" if ad.is_active else "✅ Включить",
         callback_data=f"ad_toggle_{ad.id}",
     )
+    builder.button(text="📨 Отправить всем", callback_data=f"ad_broadcast_{ad.id}")
     builder.button(text="🔙 Назад", callback_data="admin_list_ads")
     builder.adjust(1)
 
@@ -340,6 +363,34 @@ async def ad_toggle(callback: CallbackQuery):
         return
     status_text = "включена" if new_status else "отключена"
     await safe_edit(callback, f"✅ Реклама #{ad_id} {status_text}!", reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data.startswith("ad_broadcast_"))
+@admin_required
+async def ad_broadcast(callback: CallbackQuery):
+    await callback.answer()
+    ad_id = int(callback.data.replace("ad_broadcast_", ""))
+    ad = await get_ad_by_id(ad_id)
+    if ad is None:
+        return
+
+    from app.services.notification_service import send_broadcast
+    from app.services.profile_service import get_all_users
+
+    users = await get_all_users()
+    active_users = [u.telegram_id for u in users if not u.is_banned]
+
+    text = f"📢 Реклама\n\n{ad.text}"
+    if ad.button_text and ad.button_url:
+        text += f"\n\n{ad.button_text}: {ad.button_url}"
+
+    success, failed = await send_broadcast(callback.bot, active_users, text=text, photo_id=ad.photo_id)
+    await safe_edit(callback,
+        f"📨 Реклама #{ad_id} разослана!\n"
+        f"✅ Отправлено: {success}\n"
+        f"❌ Ошибок: {failed}",
+        reply_markup=admin_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "admin_users")
@@ -614,3 +665,273 @@ async def verify_reject(callback: CallbackQuery):
         await callback.message.edit_text("❌ Верификация отклонена.")
     except Exception:
         await callback.message.answer("❌ Верификация отклонена.")
+
+
+@router.callback_query(F.data == "admin_stars_balance")
+@admin_required
+async def admin_stars_balance(callback: CallbackQuery):
+    await callback.answer()
+    from app.database import async_session
+    from sqlalchemy import select, func
+    from app.models import Payment, WithdrawalRequest
+
+    async with async_session() as session:
+        total_earned = (
+            await session.execute(
+                select(func.coalesce(func.sum(Payment.amount), 0))
+                .where(Payment.currency == "XTR", Payment.status == "completed")
+            )
+        ).scalar() or 0
+
+        total_withdrawn = (
+            await session.execute(
+                select(func.coalesce(func.sum(WithdrawalRequest.amount_stars), 0))
+                .where(WithdrawalRequest.status == "approved")
+            )
+        ).scalar() or 0
+
+        pending_withdrawals = (
+            await session.execute(
+                select(func.count(WithdrawalRequest.id))
+                .where(WithdrawalRequest.status == "pending")
+            )
+        ).scalar() or 0
+
+        payment_breakdown = await session.execute(
+            select(Payment.payment_type, func.count(Payment.id), func.sum(Payment.amount))
+            .where(Payment.currency == "XTR", Payment.status == "completed")
+            .group_by(Payment.payment_type)
+        )
+
+        breakdown_text = ""
+        for row in payment_breakdown:
+            breakdown_text += f"  • {row[0]}: {row[1]} шт, {int(row[2])} ⭐\n"
+
+        available = total_earned - total_withdrawn
+
+        text = (
+            "⭐ Баланс Telegram Stars\n\n"
+            f"💰 Всего заработано: {int(total_earned)} ⭐\n"
+            f"💸 Выведено: {int(total_withdrawn)} ⭐\n"
+            f"📊 Доступно: {int(available)} ⭐\n"
+            f"⏳ Ожидает вывода: {pending_withdrawals}\n\n"
+            f"📈 По типам:\n{breakdown_text}\n\n"
+            "💡 Stars можно вывести через Fragment.com\n"
+            "или использовать для Telegram Ads."
+        )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💸 Запросить вывод", callback_data="admin_withdraw_request")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+
+    await safe_edit(callback, text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "admin_withdraw_request")
+@admin_required
+async def admin_withdraw_request(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state("waiting_withdraw_amount")
+    try:
+        await callback.message.edit_text(
+            "💸 Введите сумму в ⭐ Stars для вывода:\n\n"
+            "Доступные способы вывода:\n"
+            "• Fragment.com (TON/USDT)\n"
+            "• Telegram Ads\n\n"
+            "Или отправьте /cancel"
+        )
+    except Exception:
+        await callback.message.answer(
+            "💸 Введите сумму в ⭐ Stars для вывода:\n\n"
+            "Доступные способы вывода:\n"
+            "• Fragment.com (TON/USDT)\n"
+            "• Telegram Ads\n\n"
+            "Или отправьте /cancel"
+        )
+
+
+@router.message(F.text, F.text.startswith("/cancel"))
+async def admin_cancel(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state in ("waiting_withdraw_amount", "waiting_user_id"):
+        await state.clear()
+        await message.answer("❌ Отменено.", reply_markup=admin_keyboard())
+
+
+async def _process_withdraw_amount(message: Message, state: FSMContext):
+    from app.database import async_session
+    from sqlalchemy import select, func
+    from app.models import Payment, WithdrawalRequest, User
+
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите положительное число.")
+        return
+
+    async with async_session() as session:
+        total_earned = (
+            await session.execute(
+                select(func.coalesce(func.sum(Payment.amount), 0))
+                .where(Payment.currency == "XTR", Payment.status == "completed")
+            )
+        ).scalar() or 0
+
+        total_withdrawn = (
+            await session.execute(
+                select(func.coalesce(func.sum(WithdrawalRequest.amount_stars), 0))
+                .where(WithdrawalRequest.status.in_(["approved", "pending"]))
+            )
+        ).scalar() or 0
+
+        available = int(total_earned - total_withdrawn)
+        if amount > available:
+            await message.answer(f"❌ Недостаточно Stars. Доступно: {available} ⭐.")
+            return
+
+        admin_user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+        admin_user = admin_user.scalar_one_or_none()
+        if admin_user is None:
+            return
+
+        req = WithdrawalRequest(admin_user_id=admin_user.id, amount_stars=amount, status="pending")
+        session.add(req)
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"✅ Заявка на вывод {amount} ⭐ создана!\n\n"
+        f"Администратор бота обработает её вручную.\n"
+        f"Вывод возможен через Fragment.com или Telegram Ads.",
+        reply_markup=admin_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "admin_grant_menu")
+@admin_required
+async def admin_grant_menu(callback: CallbackQuery):
+    await callback.answer()
+    await safe_edit(callback, "🎁 Выдать пользователю:", reply_markup=admin_grant_keyboard())
+
+
+@router.callback_query(F.data == "admin_grant_premium")
+@admin_required
+async def admin_grant_premium_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(edit_field="grant_premium")
+    await state.set_state("waiting_user_id")
+    try:
+        await callback.message.edit_text("⭐ Введите Telegram ID пользователя для выдачи премиума:")
+    except Exception:
+        await callback.message.answer("⭐ Введите Telegram ID пользователя для выдачи премиума:")
+
+
+@router.callback_query(F.data == "admin_grant_boost")
+@admin_required
+async def admin_grant_boost_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(edit_field="grant_boost")
+    await state.set_state("waiting_user_id")
+    try:
+        await callback.message.edit_text("🚀 Введите Telegram ID пользователя для выдачи буста:")
+    except Exception:
+        await callback.message.answer("🚀 Введите Telegram ID пользователя для выдачи буста:")
+
+
+@router.callback_query(F.data == "admin_grant_gift")
+@admin_required
+async def admin_grant_gift_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(edit_field="grant_gift")
+    await state.set_state("waiting_user_id")
+    try:
+        await callback.message.edit_text("🎁 Введите Telegram ID пользователя для отправки подарка:")
+    except Exception:
+        await callback.message.answer("🎁 Введите Telegram ID пользователя для отправки подарка:")
+
+
+@router.callback_query(F.data == "admin_grant_likes")
+@admin_required
+async def admin_grant_likes_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(edit_field="grant_likes")
+    await state.set_state("waiting_user_id")
+    try:
+        await callback.message.edit_text("❤️ Введите Telegram ID пользователя для выдачи лайков:")
+    except Exception:
+        await callback.message.answer("❤️ Введите Telegram ID пользователя для выдачи лайков:")
+
+
+async def _process_grant(message: Message, state: FSMContext):
+    import datetime
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import User
+
+    data = await state.get_data()
+    edit_field = data.get("edit_field")
+
+    try:
+        target_tid = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Неверный Telegram ID. Введите число.")
+        return
+
+    async with async_session() as session:
+        target = await session.execute(select(User).where(User.telegram_id == target_tid))
+        target = target.scalar_one_or_none()
+        if target is None:
+            await message.answer(f"❌ Пользователь с ID {target_tid} не найден.")
+            await state.clear()
+            return
+
+        if edit_field == "grant_premium":
+            target.is_premium = True
+            target.premium_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365)
+            await session.commit()
+            await message.answer(f"✅ Премиум выдан пользователю {target_tid} на 365 дней!", reply_markup=admin_keyboard())
+
+        elif edit_field == "grant_boost":
+            from app.models import Profile
+            profile = await session.execute(select(Profile).where(Profile.user_id == target.id))
+            profile = profile.scalar_one_or_none()
+            if profile:
+                profile.is_boosted = True
+                profile.boost_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30)
+                await session.commit()
+                await message.answer(f"✅ Буст выдан пользователю {target_tid} на 30 дней!", reply_markup=admin_keyboard())
+            else:
+                await message.answer(f"❌ У пользователя {target_tid} нет анкеты.")
+
+        elif edit_field == "grant_gift":
+            from app.models import Gift
+            gift = Gift(
+                from_user_id=target.id,
+                to_user_id=target.id,
+                gift_type="rose",
+                message="🎁 Подарок от администрации!",
+                stars_cost=0,
+            )
+            session.add(gift)
+            await session.commit()
+            await message.answer(f"✅ Подарок отправлен пользователю {target_tid}!", reply_markup=admin_keyboard())
+
+        elif edit_field == "grant_likes":
+            target.extra_likes = (target.extra_likes or 0) + 50
+            await session.commit()
+            await message.answer(f"✅ 50 лайков выдано пользователю {target_tid}!", reply_markup=admin_keyboard())
+
+    await state.clear()
+
+
+@router.message(F.text)
+async def admin_text_handler(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == "waiting_withdraw_amount":
+        await _process_withdraw_amount(message, state)
+    elif current_state == "waiting_user_id":
+        await _process_grant(message, state)
