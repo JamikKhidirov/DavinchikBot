@@ -1,11 +1,13 @@
 import datetime
 
-from sqlalchemy import select, and_, or_, update
+from sqlalchemy import select, and_
 from aiogram.types import LabeledPrice
 
 from app.models import User, Profile
 from app.database import async_session
 from app.config import config
+
+UTC = datetime.timezone.utc
 
 
 PLANS = {
@@ -55,7 +57,7 @@ async def activate_premium(telegram_id: int, plan_id: str) -> bool:
         if user is None:
             return False
 
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(UTC)
         if user.is_premium and user.premium_expires_at and user.premium_expires_at > now:
             user.premium_expires_at += datetime.timedelta(days=plan["days"])
         else:
@@ -75,7 +77,7 @@ async def activate_boost(telegram_id: int) -> bool:
         if profile is None:
             return False
 
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(UTC)
         if profile.is_boosted and profile.boost_expires_at and profile.boost_expires_at > now:
             profile.boost_expires_at += datetime.timedelta(days=7)
         else:
@@ -87,7 +89,7 @@ async def activate_boost(telegram_id: int) -> bool:
 
 
 async def check_premium_expired():
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(UTC)
     async with async_session() as session:
         result = await session.execute(
             select(User).where(and_(User.is_premium == True, User.premium_expires_at < now))
@@ -101,7 +103,7 @@ async def check_premium_expired():
 
 
 async def check_boost_expired():
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(UTC)
     async with async_session() as session:
         result = await session.execute(
             select(Profile).where(and_(Profile.is_boosted == True, Profile.boost_expires_at < now))
@@ -123,5 +125,5 @@ async def can_boost(telegram_id: int) -> bool:
         if profile is None:
             return False
         if profile.is_boosted and profile.boost_expires_at:
-            return profile.boost_expires_at < datetime.datetime.utcnow()
+            return profile.boost_expires_at < datetime.datetime.now(UTC)
         return True

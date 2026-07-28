@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+def _utcnow():
+    return datetime.datetime.now(datetime.UTC)
+
+
 class Like(Base):
     __tablename__ = "likes"
     __table_args__ = (UniqueConstraint("from_user_id", "to_user_id", name="uq_like"),)
@@ -14,7 +18,7 @@ class Like(Base):
     from_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     to_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     is_like: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
 
     from_user = relationship("User", foreign_keys=[from_user_id], back_populates="likes_given")
     to_user = relationship("User", foreign_keys=[to_user_id], back_populates="likes_received")

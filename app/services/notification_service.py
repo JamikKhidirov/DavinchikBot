@@ -6,13 +6,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 async def notify_match(bot: Bot, user1_telegram_id: int, user2_telegram_id: int, match_info: dict):
     text1 = (
         f"💕 Взаимная симпатия!\n\n"
-        f"Вы понравились {match_info['name']}, {match_info['age']} лет, {match_info['city']}!\n"
-        f"Напишите ей/ему: @{match_info['username'] or 'пользователь не указал username'}"
+        f"Вы понравились {match_info['name2']}, {match_info['age2']} лет, {match_info['city2']}!\n"
+        f"Напишите ей/ему: @{match_info['username2'] or 'пользователь не указал username'}"
     )
     text2 = (
         f"💕 Взаимная симпатия!\n\n"
-        f"Вы понравились {match_info['name2']}, {match_info['age2']} лет, {match_info['city2']}!\n"
-        f"Напишите ей/ему: @{match_info['username2'] or 'пользователь не указал username'}"
+        f"Вы понравились {match_info['name']}, {match_info['age']} лет, {match_info['city']}!\n"
+        f"Напишите ей/ему: @{match_info['username'] or 'пользователь не указал username'}"
     )
 
     try:
@@ -25,10 +25,27 @@ async def notify_match(bot: Bot, user1_telegram_id: int, user2_telegram_id: int,
         pass
 
 
-async def notify_like(bot: Bot, user_telegram_id: int, liker_name: str):
-    text = f"💕 Кому-то понравилась ваша анкета! Откройте бота, чтобы узнать кто."
+async def notify_like(bot: Bot, user_telegram_id: int, liker_profile: dict, liker_user_id: int = None):
+    text = (
+        f"💕 Ваша анкета понравилась!\n\n"
+        f"{liker_profile.get('name', '?')}, {liker_profile.get('age', '?')} лет\n"
+        f"🏙 {liker_profile.get('city', '?')}\n"
+        f"{liker_profile.get('bio', '')}"
+    )
+    photos = liker_profile.get("photos", [])
+    kb = None
+    if liker_user_id:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        builder = InlineKeyboardBuilder()
+        builder.button(text="❤️ Ответить", callback_data=f"like_{liker_user_id}")
+        builder.button(text="👎 Пропустить", callback_data="next_search")
+        builder.adjust(2)
+        kb = builder.as_markup()
     try:
-        await bot.send_message(user_telegram_id, text)
+        if photos:
+            await bot.send_photo(user_telegram_id, photos[0], caption=text, reply_markup=kb)
+        else:
+            await bot.send_message(user_telegram_id, text, reply_markup=kb)
     except Exception:
         pass
 

@@ -25,7 +25,7 @@ def test_models_imports():
 
 
 def test_all_handlers_import():
-    from app.handlers import start, registration, search, profile, matches, admin, complaints, premium
+    from app.handlers import start, registration, search, profile, matches, admin, complaints, premium, anonymous
     assert start.router is not None
     assert registration.router is not None
     assert search.router is not None
@@ -34,6 +34,7 @@ def test_all_handlers_import():
     assert admin.router is not None
     assert complaints.router is not None
     assert premium.router is not None
+    assert anonymous.router is not None
 
 
 def test_services_import():

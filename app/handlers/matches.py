@@ -8,16 +8,23 @@ from app.services.matching_service import get_matches, unmatch
 router = Router()
 
 
+async def safe_edit(callback: CallbackQuery, text: str, reply_markup=None):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 @router.callback_query(F.data == "my_matches")
 async def show_matches(callback: CallbackQuery):
+    await callback.answer()
     matches = await get_matches(callback.from_user.id)
 
     if not matches:
-        await callback.message.edit_text(
+        await safe_edit(callback,
             "💕 У вас пока нет совпадений. Смотрите анкеты и ставьте лайки!",
             reply_markup=main_menu_keyboard(),
         )
-        await callback.answer()
         return
 
     builder = InlineKeyboardBuilder()
@@ -27,28 +34,25 @@ async def show_matches(callback: CallbackQuery):
     builder.button(text="🏠 Главное меню", callback_data="main_menu")
     builder.adjust(1)
 
-    await callback.message.edit_text(
+    await safe_edit(callback,
         f"💕 Твои совпадения ({len(matches)}):",
         reply_markup=builder.as_markup(),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("match_view_"))
 async def view_match(callback: CallbackQuery):
+    await callback.answer()
     target_id = int(callback.data.replace("match_view_", ""))
 
-    from app.services.matching_service import get_next_profile
     from app.services.profile_service import get_user_by_id, get_profile_by_telegram_id
 
     user = await get_user_by_id(target_id)
     if user is None:
-        await callback.answer("Пользователь не найден", show_alert=True)
         return
 
-    profile = await get_profile_by_telegram_id(target_id)
+    profile = await get_profile_by_telegram_id(user.telegram_id)
     if profile is None:
-        await callback.answer("Анкета не найдена", show_alert=True)
         return
 
     builder = InlineKeyboardBuilder()
@@ -68,27 +72,23 @@ async def view_match(callback: CallbackQuery):
         f"{profile.bio or ''}"
     )
 
-    if profile.photos:
-        await callback.message.answer_photo(
-            profile.photos[0],
-            caption=text,
-            reply_markup=builder.as_markup(),
-        )
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+    photos = profile.photos or []
+    videos = profile.videos or []
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    if photos:
+        await callback.message.answer_photo(photos[0], caption=text, reply_markup=builder.as_markup())
+    elif videos:
+        await callback.message.answer_video(videos[0], caption=text, reply_markup=builder.as_markup())
     else:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    await callback.answer()
+        await safe_edit(callback, text, reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data.startswith("unmatch_confirm_"))
 async def confirm_unmatch(callback: CallbackQuery):
+    await callback.answer()
     target_id = int(callback.data.replace("unmatch_confirm_", ""))
     await unmatch(callback.from_user.id, target_id)
-    await callback.message.edit_text(
-        "✅ Совпадение удалено.",
-        reply_markup=main_menu_keyboard(),
-    )
-    await callback.answer()
+    await safe_edit(callback, "✅ Совпадение удалено.", reply_markup=main_menu_keyboard())

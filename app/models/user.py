@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+def _utcnow():
+    return datetime.datetime.now(datetime.UTC)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -21,9 +25,9 @@ class User(Base):
     daily_likes_count: Mapped[int] = mapped_column(Integer, default=0)
     last_like_date: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
     last_active_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")

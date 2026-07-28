@@ -11,7 +11,7 @@ from app.config import config
 from app.database import init_db, engine
 from app.middlewares.throttling import ThrottlingMiddleware
 from app.handlers import (
-    start, registration, search, profile, matches, admin, complaints, premium,
+    start, registration, search, profile, matches, admin, complaints, premium, anonymous,
 )
 
 LOGS_DIR = Path(__file__).parent.parent / "logs"
@@ -34,11 +34,11 @@ async def on_startup(bot: Bot):
     await init_db()
     logger.info("База данных готова.")
 
-    from app.services.profile_service import get_all_users, deactivate_inactive_profiles
+    from app.services.profile_service import get_all_users, deactivate_inactive_profiles, set_admin
     users = await get_all_users()
     for user in users:
         if user.telegram_id in config.admin_ids_list:
-            user.is_admin = True
+            await set_admin(user.telegram_id, True)
 
     deactivated = await deactivate_inactive_profiles()
     if deactivated:
@@ -81,6 +81,7 @@ async def main():
     dp.include_router(admin.router)
     dp.include_router(complaints.router)
     dp.include_router(premium.router)
+    dp.include_router(anonymous.router)
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

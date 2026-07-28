@@ -1,8 +1,7 @@
 import datetime
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, PreCheckoutQuery, LabeledPrice
-from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message, PreCheckoutQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.keyboards.profile import main_menu_keyboard
@@ -14,11 +13,20 @@ from app.services.profile_service import (
     get_profile_by_telegram_id, get_user_by_telegram_id, is_banned,
 )
 
+UTC = datetime.timezone.utc
 router = Router()
+
+
+async def safe_edit(callback: CallbackQuery, text: str, reply_markup=None):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await callback.message.answer(text, reply_markup=reply_markup)
 
 
 @router.callback_query(F.data == "premium")
 async def show_premium(callback: CallbackQuery):
+    await callback.answer()
     user = await get_user_by_telegram_id(callback.from_user.id)
     is_premium = user and user.is_premium
 
@@ -31,7 +39,10 @@ async def show_premium(callback: CallbackQuery):
     builder.button(text="🏠 На главную", callback_data="main_menu")
     builder.adjust(1)
 
-    status = f"✅ Активен до {user.premium_expires_at.strftime('%d.%m.%Y')}" if is_premium else "❌ Не активен"
+    if is_premium and user and user.premium_expires_at:
+        status = f"✅ Активен до {user.premium_expires_at.strftime('%d.%m.%Y')}"
+    else:
+        status = "❌ Не активен"
 
     text = (
         "⭐ <b>Премиум-доступ</b>\n\n"
@@ -42,52 +53,52 @@ async def show_premium(callback: CallbackQuery):
         "🎨 <b>Приоритетная поддержка</b>\n\n"
         "Оплата через ⭐ Telegram Stars"
     )
-    await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    await callback.answer()
+    await safe_edit(callback, text, reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data.startswith("buy_premium_"))
 async def buy_premium(callback: CallbackQuery):
+    await callback.answer()
     plan_id = callback.data.replace("buy_premium_", "")
     plan = PLANS.get(plan_id)
     if not plan:
-        await callback.answer("План не найден", show_alert=True)
         return
 
     params = get_invoice_params(plan_id, callback.from_user.id)
     if not params:
-        await callback.answer("Ошибка создания счёта", show_alert=True)
         return
 
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.message.answer_invoice(**params)
-    await callback.answer()
 
 
 @router.callback_query(F.data == "boost_anketa")
 async def boost_anketa(callback: CallbackQuery):
+    await callback.answer()
     if await is_banned(callback.from_user.id):
-        await callback.answer("🚫 Вы забанены.", show_alert=True)
         return
 
     profile = await get_profile_by_telegram_id(callback.from_user.id)
     if profile is None:
-        await callback.answer("Сначала создайте анкету.", show_alert=True)
         return
 
-    if profile.is_boosted and profile.boost_expires_at and profile.boost_expires_at > datetime.datetime.utcnow():
-        left = (profile.boost_expires_at - datetime.datetime.utcnow()).days
-        await callback.message.edit_text(
+    if profile.is_boosted and profile.boost_expires_at and profile.boost_expires_at > datetime.datetime.now(UTC):
+        left = (profile.boost_expires_at - datetime.datetime.now(UTC)).days
+        await safe_edit(callback,
             f"🚀 Буст уже активен! Осталось {left} дн.\n"
             "Можно продлить ещё на 7 дней.",
         )
-        await callback.answer()
         return
 
     params = get_boost_invoice_params(callback.from_user.id)
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.message.answer_invoice(**params)
-    await callback.answer()
 
 
 @router.pre_checkout_query()
@@ -131,16 +142,13 @@ async def successful_payment(message: Message):
 
 @router.callback_query(F.data == "blocked_list")
 async def show_blocked(callback: CallbackQuery):
+    await callback.answer()
     from app.services.block_service import get_blocked_users
 
     blocked = await get_blocked_users(callback.from_user.id)
 
     if not blocked:
-        await callback.message.edit_text(
-            "🚫 У вас нет заблокированных пользователей.",
-            reply_markup=main_menu_keyboard(),
-        )
-        await callback.answer()
+        await safe_edit(callback, "🚫 У вас нет заблокированных пользователей.", reply_markup=main_menu_keyboard())
         return
 
     builder = InlineKeyboardBuilder()
@@ -152,22 +160,14 @@ async def show_blocked(callback: CallbackQuery):
     builder.button(text="🏠 На главную", callback_data="main_menu")
     builder.adjust(1)
 
-    await callback.message.edit_text(
-        "🚫 Заблокированные пользователи:",
-        reply_markup=builder.as_markup(),
-    )
-    await callback.answer()
+    await safe_edit(callback, "🚫 Заблокированные пользователи:", reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data.startswith("unblock_"))
 async def process_unblock(callback: CallbackQuery):
+    await callback.answer()
     from app.services.block_service import unblock_user
 
     target_id = int(callback.data.split("_")[1])
     await unblock_user(callback.from_user.id, target_id)
-
-    await callback.message.edit_text(
-        "✅ Пользователь разблокирован.",
-        reply_markup=main_menu_keyboard(),
-    )
-    await callback.answer()
+    await safe_edit(callback, "✅ Пользователь разблокирован.", reply_markup=main_menu_keyboard())

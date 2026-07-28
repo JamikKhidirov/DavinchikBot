@@ -1,7 +1,6 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
-
 from aiogram.fsm.state import StatesGroup, State
 
 from app.keyboards.profile import main_menu_keyboard
@@ -17,7 +16,11 @@ router = Router()
 
 @router.callback_query(F.data.startswith("complaint_"))
 async def start_complaint(callback: CallbackQuery, state: FSMContext):
-    target_id = int(callback.data.split("_")[1])
+    parts = callback.data.split("_")
+    if len(parts) < 2:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    target_id = int(parts[1])
     await state.update_data(complaint_target_id=target_id)
     await state.set_state(ComplaintState.reason)
     await callback.message.answer(
@@ -27,7 +30,7 @@ async def start_complaint(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(ComplaintState.reason)
-async def process_complaint(message, state: FSMContext):
+async def process_complaint(message: Message, state: FSMContext):
     data = await state.get_data()
     target_id = data.get("complaint_target_id")
     reason = message.text.strip()

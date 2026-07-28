@@ -22,11 +22,12 @@ def profile_action_keyboard(target_id: int, is_match: bool = False) -> InlineKey
         builder.button(text="👎", callback_data=f"dislike_{target_id}")
         builder.button(text="🚫 Заблокировать", callback_data=f"block_{target_id}")
     builder.button(text="💬 Пожаловаться", callback_data=f"complaint_{target_id}")
+    builder.button(text="🕵️ Анонимно", callback_data=f"anon_{target_id}")
     builder.button(text="⏭ В меню", callback_data="main_menu")
     if is_match:
         builder.adjust(2, 1, 1)
     else:
-        builder.adjust(2, 1, 1, 1)
+        builder.adjust(2, 1, 1, 1, 1)
     return builder.as_markup()
 
 

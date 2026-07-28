@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+def _utcnow():
+    return datetime.datetime.now(datetime.UTC)
+
+
 class Profile(Base):
     __tablename__ = "profiles"
 
@@ -18,6 +22,7 @@ class Profile(Base):
     city: Mapped[str] = mapped_column(String(128), nullable=False)
     bio: Mapped[str] = mapped_column(Text, nullable=True)
     photos: Mapped[list] = mapped_column(JSON, default=list)
+    videos: Mapped[list] = mapped_column(JSON, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_boosted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -26,9 +31,9 @@ class Profile(Base):
     views_count: Mapped[int] = mapped_column(Integer, default=0)
     age_min_preference: Mapped[int] = mapped_column(Integer, default=18)
     age_max_preference: Mapped[int] = mapped_column(Integer, default=99)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     user = relationship("User", back_populates="profile")

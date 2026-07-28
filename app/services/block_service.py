@@ -1,7 +1,4 @@
-from typing import Optional
-
 from sqlalchemy import select, and_, or_, delete
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, Block
 from app.database import async_session

@@ -1,11 +1,13 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import select, and_, or_, delete
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, Profile, Like, Match
 from app.database import async_session
+
+UTC = datetime.timezone.utc
 
 
 async def get_or_create_user(telegram_id: int, username: str = None, first_name: str = None, last_name: str = None) -> User:
@@ -51,6 +53,7 @@ async def create_profile(
     city: str,
     bio: str,
     photos: list,
+    videos: list = None,
     age_min: int = 18,
     age_max: int = 99,
 ) -> Profile:
@@ -69,6 +72,7 @@ async def create_profile(
             city=city,
             bio=bio,
             photos=photos,
+            videos=videos or [],
             age_min_preference=age_min,
             age_max_preference=age_max,
         )
@@ -114,6 +118,17 @@ async def get_user_by_telegram_id(telegram_id: int) -> Optional[User]:
     async with async_session() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         return result.scalar_one_or_none()
+
+
+async def set_admin(telegram_id: int, admin: bool = True) -> bool:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return False
+        user.is_admin = admin
+        await session.commit()
+        return True
 
 
 async def is_admin(telegram_id: int) -> bool:
@@ -167,7 +182,7 @@ async def update_last_active(telegram_id: int):
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = result.scalar_one_or_none()
         if user:
-            user.last_active_at = datetime.datetime.utcnow()
+            user.last_active_at = datetime.datetime.now(UTC)
             await session.commit()
 
 
@@ -272,7 +287,7 @@ async def reject_verification(profile_id: int) -> bool:
 async def deactivate_inactive_profiles():
     from app.config import config
 
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=config.inactive_days_before_hide)
+    cutoff = datetime.datetime.now(UTC) - datetime.timedelta(days=config.inactive_days_before_hide)
     async with async_session() as session:
         result = await session.execute(
             select(Profile).join(User).where(

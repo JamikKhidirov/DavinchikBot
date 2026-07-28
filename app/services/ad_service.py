@@ -1,7 +1,6 @@
 from typing import Optional
 
 from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Advertisement
 from app.database import async_session

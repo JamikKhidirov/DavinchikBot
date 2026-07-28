@@ -1,13 +1,13 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import select, and_, or_, not_, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, or_, delete
 
 from app.models import User, Profile, Like, Match, Block
 from app.database import async_session
-from app.services.profile_service import get_user_by_telegram_id
 from app.config import config
+
+UTC = datetime.timezone.utc
 
 
 async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
@@ -20,7 +20,7 @@ async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
         if user.is_premium:
             return True, 999
 
-        today = datetime.datetime.utcnow().date()
+        today = datetime.datetime.now(UTC).date()
         if user.last_like_date and user.last_like_date.date() == today:
             remaining = config.max_likes_per_day - user.daily_likes_count
             if remaining <= 0:
@@ -28,7 +28,7 @@ async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
             return True, remaining
         else:
             user.daily_likes_count = 0
-            user.last_like_date = datetime.datetime.utcnow()
+            user.last_like_date = datetime.datetime.now(UTC)
             await session.commit()
             return True, config.max_likes_per_day
 
@@ -53,7 +53,7 @@ async def like_profile(from_telegram_id: int, to_user_id: int) -> Optional[str]:
             return "already_exists"
 
         from_user.daily_likes_count += 1
-        from_user.last_like_date = datetime.datetime.utcnow()
+        from_user.last_like_date = datetime.datetime.now(UTC)
 
         like = Like(from_user_id=from_user.id, to_user_id=to_user_id, is_like=True)
         session.add(like)
@@ -110,7 +110,6 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
         if my_profile is None:
             return None
 
-        liked_subq = select(Like.to_user_id).where(Like.from_user_id == user.id)
         matches_subq1 = select(Match.user2_id).where(Match.user1_id == user.id)
         matches_subq2 = select(Match.user1_id).where(Match.user2_id == user.id)
         blocked_by_me = select(Block.blocked_user_id).where(Block.user_id == user.id)
@@ -119,7 +118,6 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
         base_filters = [
             Profile.user_id != user.id,
             Profile.is_active == True,
-            Profile.user_id.not_in(liked_subq),
             Profile.user_id.not_in(matches_subq1),
             Profile.user_id.not_in(matches_subq2),
             Profile.user_id.not_in(blocked_by_me),
@@ -132,27 +130,49 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             ),
         ]
 
-        def sort_exprs(city_filter=True):
-            exprs = [
-                Profile.is_boosted.desc(),
-                Profile.is_verified.desc(),
-            ]
-            return exprs
+        def sort_exprs():
+            return [Profile.is_boosted.desc(), Profile.is_verified.desc()]
 
+        liked_subq = select(Like.to_user_id).where(and_(Like.from_user_id == user.id, Like.is_like == True))
+        disliked_subq = select(Like.to_user_id).where(and_(Like.from_user_id == user.id, Like.is_like == False))
+        seen_subq = select(Like.to_user_id).where(Like.from_user_id == user.id)
+
+        city_filters = [*base_filters, Profile.user_id.not_in(seen_subq), Profile.city == my_profile.city]
         candidates = await session.execute(
             select(Profile)
-            .where(and_(Profile.city == my_profile.city, *base_filters))
+            .where(and_(*city_filters))
             .order_by(*sort_exprs(), Profile.created_at.desc())
             .limit(5)
         )
         candidates_list = list(candidates.scalars().all())
 
         if not candidates_list:
+            all_filters = [*base_filters, Profile.user_id.not_in(seen_subq)]
             candidates = await session.execute(
                 select(Profile)
-                .where(and_(*base_filters))
-                .order_by(*sort_exprs(False), Profile.created_at.desc())
+                .where(and_(*all_filters))
+                .order_by(*sort_exprs(), Profile.created_at.desc())
                 .limit(5)
+            )
+            candidates_list = list(candidates.scalars().all())
+
+        if not candidates_list:
+            seen_filters = [*base_filters, Profile.user_id.not_in(seen_subq)]
+            candidates = await session.execute(
+                select(Profile)
+                .where(and_(*seen_filters))
+                .order_by(*sort_exprs(), Profile.created_at.desc())
+                .limit(5)
+            )
+            candidates_list = list(candidates.scalars().all())
+
+        if not candidates_list:
+            last_filters = [Profile.is_active == True, Profile.user_id.not_in(seen_subq)]
+            candidates = await session.execute(
+                select(Profile)
+                .where(and_(*last_filters))
+                .order_by(Profile.created_at.desc())
+                .limit(1)
             )
             candidates_list = list(candidates.scalars().all())
 
@@ -176,6 +196,7 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             "city": candidate_profile.city,
             "bio": candidate_profile.bio or "",
             "photos": candidate_profile.photos or [],
+            "videos": candidate_profile.videos or [],
             "is_verified": candidate_profile.is_verified,
             "is_boosted": candidate_profile.is_boosted,
         }
@@ -243,6 +264,7 @@ async def get_matches(telegram_id: int) -> list[dict]:
                     "age": matched_profile.age,
                     "city": matched_profile.city,
                     "photo": matched_profile.photos[0] if matched_profile.photos else None,
+                    "video": matched_profile.videos[0] if matched_profile.videos else None,
                     "matched_at": match.created_at,
                 })
         return match_list

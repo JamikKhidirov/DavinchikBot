@@ -11,9 +11,14 @@ def anyio_backend():
 
 @pytest.fixture(autouse=True)
 async def clean_db():
+    from app.database import init_db
+    await init_db()
     async with async_session() as session:
         for table in ("payments", "advertisements", "complaints", "matches", "likes", "blocks", "profiles", "users"):
-            await session.execute(text(f"DELETE FROM {table}"))
+            try:
+                await session.execute(text(f"DELETE FROM {table}"))
+            except Exception:
+                pass
         await session.commit()
 
 

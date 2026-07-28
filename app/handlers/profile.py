@@ -11,25 +11,28 @@ from app.services.profile_service import (
     get_profile_by_telegram_id, update_profile, has_profile, is_banned,
     get_profile_stats, request_verification, get_user_by_telegram_id,
 )
-from app.states.registration import Registration
+from app.states.edit_profile import EditProfile, Verification
 
 router = Router()
 
 
+async def safe_edit(callback: CallbackQuery, text: str, reply_markup=None):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 @router.callback_query(F.data == "my_profile")
 async def show_my_profile(callback: CallbackQuery):
+    await callback.answer()
     if await is_banned(callback.from_user.id):
         await callback.message.answer("🚫 Вы забанены.")
-        await callback.answer()
         return
 
     profile = await get_profile_by_telegram_id(callback.from_user.id)
     if profile is None:
-        await callback.message.edit_text(
-            "У вас нет анкеты. Создайте через /register",
-            reply_markup=main_menu_keyboard(),
-        )
-        await callback.answer()
+        await safe_edit(callback, "У вас нет анкеты. Создайте через /register", reply_markup=main_menu_keyboard())
         return
 
     user = await get_user_by_telegram_id(callback.from_user.id)
@@ -49,7 +52,7 @@ async def show_my_profile(callback: CallbackQuery):
         f"🔍 Ищу: {looking_map.get(profile.looking_for, profile.looking_for)}\n"
         f"🏙 Город: {profile.city}\n"
         f"📄 О себе: {profile.bio or '—'}\n"
-        f"📸 Фото: {len(profile.photos or [])} 📸\n"
+        f"📸 Фото: {len(profile.photos or [])} | 🎬 Видео: {len(profile.videos or [])}\n"
         f"{verified_badge} | {premium_badge}\n\n"
         f"📊 Статистика:\n"
         f"👁 Просмотров: {stats.get('views', 0)}\n"
@@ -57,33 +60,34 @@ async def show_my_profile(callback: CallbackQuery):
         f"💕 Совпадений: {stats.get('matches', 0)}"
     )
 
-    if profile.photos:
-        await callback.message.answer_photo(
-            profile.photos[0],
-            caption=text,
-            reply_markup=edit_profile_keyboard(),
-        )
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
+    kb = edit_profile_keyboard()
+    photos = profile.photos or []
+    videos = profile.videos or []
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    if photos:
+        await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
+    elif videos:
+        await callback.message.answer_video(videos[0], caption=text, reply_markup=kb)
     else:
-        await callback.message.edit_text(text, reply_markup=edit_profile_keyboard())
-    await callback.answer()
+        await callback.message.answer(text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_profile_field(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     field = callback.data.replace("edit_", "")
 
     field_states = {
-        "name": Registration.name,
-        "age": Registration.age,
-        "gender": Registration.gender,
-        "looking_for": Registration.looking_for,
-        "city": Registration.city,
-        "bio": Registration.bio,
-        "photos": Registration.photos,
+        "name": EditProfile.name,
+        "age": EditProfile.age,
+        "gender": EditProfile.gender,
+        "looking_for": EditProfile.looking_for,
+        "city": EditProfile.city,
+        "bio": EditProfile.bio,
+        "photos": EditProfile.photos,
     }
 
     prompts = {
@@ -109,28 +113,30 @@ async def edit_profile_field(callback: CallbackQuery, state: FSMContext):
             kb = gender_keyboard()
 
         if kb:
-            await callback.message.edit_text(msg, reply_markup=kb)
+            try:
+                await callback.message.edit_text(msg, reply_markup=kb)
+            except Exception:
+                await callback.message.answer(msg, reply_markup=kb)
         else:
-            await callback.message.edit_text(msg)
+            try:
+                await callback.message.edit_text(msg)
+            except Exception:
+                await callback.message.answer(msg)
 
-    await callback.answer()
 
-
-@router.message(Registration.name)
+@router.message(EditProfile.name)
 async def update_name(message: Message, state: FSMContext):
     data = await state.get_data()
     field = data.get("edit_field", "name")
     if len(message.text) > 64:
         await message.answer("Слишком длинное (макс 64). Попробуйте ещё:")
         return
-
     await update_profile(message.from_user.id, **{field: message.text})
     await state.clear()
-    profile = await get_profile_by_telegram_id(message.from_user.id)
     await message.answer("✅ Обновлено!", reply_markup=main_menu_keyboard())
 
 
-@router.message(Registration.age)
+@router.message(EditProfile.age)
 async def update_age(message: Message, state: FSMContext):
     try:
         val = int(message.text)
@@ -139,34 +145,38 @@ async def update_age(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Введите число от 16 до 99:")
         return
-
     data = await state.get_data()
     field = data.get("edit_field", "age")
-
     await update_profile(message.from_user.id, **{field: val})
     await state.clear()
     await message.answer("✅ Обновлено!", reply_markup=main_menu_keyboard())
 
 
-@router.callback_query(Registration.gender, F.data.in_({"mygender_male", "mygender_female"}))
+@router.callback_query(EditProfile.gender, F.data.in_({"mygender_male", "mygender_female"}))
 async def update_gender(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     gender = "male" if callback.data == "mygender_male" else "female"
     await update_profile(callback.from_user.id, gender=gender)
     await state.clear()
-    await callback.message.edit_text("✅ Пол обновлён!", reply_markup=main_menu_keyboard())
-    await callback.answer()
+    try:
+        await callback.message.edit_text("✅ Пол обновлён!", reply_markup=main_menu_keyboard())
+    except Exception:
+        await callback.message.answer("✅ Пол обновлён!", reply_markup=main_menu_keyboard())
 
 
-@router.callback_query(Registration.looking_for, F.data.in_({"gender_male", "gender_female", "gender_all"}))
+@router.callback_query(EditProfile.looking_for, F.data.in_({"gender_male", "gender_female", "gender_all"}))
 async def update_looking_for(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     mapping = {"gender_male": "male", "gender_female": "female", "gender_all": "all"}
     await update_profile(callback.from_user.id, looking_for=mapping[callback.data])
     await state.clear()
-    await callback.message.edit_text("✅ Настройки поиска обновлены!", reply_markup=main_menu_keyboard())
-    await callback.answer()
+    try:
+        await callback.message.edit_text("✅ Настройки поиска обновлены!", reply_markup=main_menu_keyboard())
+    except Exception:
+        await callback.message.answer("✅ Настройки поиска обновлены!", reply_markup=main_menu_keyboard())
 
 
-@router.message(Registration.city)
+@router.message(EditProfile.city)
 async def update_city(message: Message, state: FSMContext):
     if len(message.text) > 128:
         await message.answer("Слишком длинное название. Попробуйте ещё:")
@@ -176,7 +186,7 @@ async def update_city(message: Message, state: FSMContext):
     await message.answer("✅ Город обновлён!", reply_markup=main_menu_keyboard())
 
 
-@router.message(Registration.bio)
+@router.message(EditProfile.bio)
 async def update_bio(message: Message, state: FSMContext):
     bio = message.text.strip()
     if bio == "-":
@@ -186,112 +196,105 @@ async def update_bio(message: Message, state: FSMContext):
     await message.answer("✅ Информация обновлена!", reply_markup=main_menu_keyboard())
 
 
-@router.message(Registration.photos, F.photo)
+@router.message(EditProfile.photos, F.photo)
 async def update_photos(message: Message, state: FSMContext):
-    from app.handlers.registration import photos_storage
+    from app.handlers.registration import media_storage
 
     user_id = message.from_user.id
-    if user_id not in photos_storage:
-        photos_storage[user_id] = []
+    if user_id not in media_storage:
+        media_storage[user_id] = {"photos": [], "videos": []}
 
-    photos_storage[user_id].append(message.photo[-1].file_id)
+    media_storage[user_id]["photos"].append(message.photo[-1].file_id)
+    total = len(media_storage[user_id]["photos"]) + len(media_storage[user_id]["videos"])
 
-    if len(photos_storage[user_id]) >= 3:
-        await update_profile(message.from_user.id, photos=photos_storage[user_id])
-        photos_storage.pop(user_id, None)
+    if total >= 3:
+        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"], videos=media_storage[user_id]["videos"])
+        media_storage.pop(user_id, None)
         await state.clear()
-        await message.answer("✅ Фото обновлены!", reply_markup=main_menu_keyboard())
+        await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
     else:
-        await message.answer(f"✅ Фото #{len(photos_storage[user_id])} добавлено. Ещё или /done.")
+        await message.answer(f"✅ Фото #{len(media_storage[user_id]['photos'])} добавлено. Ещё или /done.")
 
 
-@router.message(Registration.photos, Command("done"))
-async def done_update_photos(message: Message, state: FSMContext):
-    from app.handlers.registration import photos_storage
+@router.message(EditProfile.photos, F.video)
+async def update_video(message: Message, state: FSMContext):
+    from app.handlers.registration import media_storage
 
     user_id = message.from_user.id
-    photos = photos_storage.pop(user_id, [])
-    await update_profile(message.from_user.id, photos=photos)
+    if user_id not in media_storage:
+        media_storage[user_id] = {"photos": [], "videos": []}
+
+    media_storage[user_id]["videos"].append(message.video.file_id)
+    total = len(media_storage[user_id]["photos"]) + len(media_storage[user_id]["videos"])
+
+    if total >= 3:
+        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"], videos=media_storage[user_id]["videos"])
+        media_storage.pop(user_id, None)
+        await state.clear()
+        await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
+    else:
+        await message.answer(f"✅ Видео #{len(media_storage[user_id]['videos'])} добавлено. Ещё или /done.")
+
+
+@router.message(EditProfile.photos, Command("done"))
+async def done_update_photos(message: Message, state: FSMContext):
+    from app.handlers.registration import media_storage
+
+    user_id = message.from_user.id
+    data = media_storage.pop(user_id, {"photos": [], "videos": []})
+    await update_profile(message.from_user.id, photos=data["photos"], videos=data["videos"])
     await state.clear()
-    await message.answer("✅ Фото обновлены!", reply_markup=main_menu_keyboard())
+    await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
 
 
 @router.callback_query(F.data == "request_verify")
 async def request_verify(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     profile = await get_profile_by_telegram_id(callback.from_user.id)
     if profile is None:
-        await callback.answer("Сначала создайте анкету.", show_alert=True)
+        await callback.message.answer("Сначала создайте анкету.")
         return
 
     if profile.is_verified:
-        await callback.message.edit_text(
-            "✅ Ваша анкета уже верифицирована!",
-            reply_markup=main_menu_keyboard(),
-        )
-        await callback.answer()
+        await safe_edit(callback, "✅ Ваша анкета уже верифицирована!", reply_markup=main_menu_keyboard())
         return
 
-    await state.set_state(Registration.photos)
+    await state.set_state(Verification.photo)
     await state.update_data(edit_field="verification_photo")
+    text = ("📸 Отправьте фото, на котором вы держите листок с написанным"
+            "вашим Telegram @username.\n\n"
+            "Это нужно для подтверждения, что вы реальный человек.")
     try:
-        await callback.message.edit_text(
-            "📸 Отправьте фото, на котором вы держите листок с написанным"
-            "вашим Telegram @username.\n\n"
-            "Это нужно для подтверждения, что вы реальный человек."
-        )
+        await callback.message.edit_text(text)
     except Exception:
-        await callback.message.answer(
-            "📸 Отправьте фото, на котором вы держите листок с написанным"
-            "вашим Telegram @username.\n\n"
-            "Это нужно для подтверждения, что вы реальный человек."
-        )
-    await callback.answer()
+        await callback.message.answer(text)
 
 
-@router.message(Registration.photos, F.photo)
+@router.message(Verification.photo, F.photo)
 async def handle_verify_photo(message: Message, state: FSMContext):
-    data = await state.get_data()
-    field = data.get("edit_field")
-    if field == "verification_photo":
-        photo_id = message.photo[-1].file_id
-        await request_verification(message.from_user.id, photo_id)
-        await state.clear()
-        await message.answer(
-            "✅ Фото отправлено на верификацию администратору. Ожидайте.",
-            reply_markup=main_menu_keyboard(),
-        )
-        return
-
-    from app.handlers.registration import photos_storage
-    user_id = message.from_user.id
-    if user_id not in photos_storage:
-        photos_storage[user_id] = []
-    photos_storage[user_id].append(message.photo[-1].file_id)
-    if len(photos_storage[user_id]) >= 3:
-        await update_profile(message.from_user.id, photos=photos_storage[user_id])
-        photos_storage.pop(user_id, None)
-        await state.clear()
-        await message.answer("✅ Фото обновлены!", reply_markup=main_menu_keyboard())
-    else:
-        await message.answer(f"✅ Фото #{len(photos_storage[user_id])} добавлено. Ещё или /done.")
+    photo_id = message.photo[-1].file_id
+    await request_verification(message.from_user.id, photo_id)
+    await state.clear()
+    await message.answer(
+        "✅ Фото отправлено на верификацию администратору. Ожидайте.",
+        reply_markup=main_menu_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "settings")
 async def show_settings(callback: CallbackQuery):
+    await callback.answer()
     user = await get_user_by_telegram_id(callback.from_user.id)
     is_premium = user and user.is_premium
-    await callback.message.edit_text(
-        "⚙️ Настройки:",
-        reply_markup=settings_keyboard(is_premium=is_premium),
-    )
-    await callback.answer()
+    await safe_edit(callback, "⚙️ Настройки:", reply_markup=settings_keyboard(is_premium=is_premium))
 
 
 @router.callback_query(F.data == "search_settings")
 async def show_search_settings(callback: CallbackQuery):
+    await callback.answer()
     profile = await get_profile_by_telegram_id(callback.from_user.id)
     if profile is None:
-        await callback.answer("Сначала создайте анкету.", show_alert=True)
+        await callback.message.answer("Сначала создайте анкету.")
         return
 
     looking_map = {"male": "Мужчин", "female": "Женщин", "all": "Всех"}
@@ -301,40 +304,45 @@ async def show_search_settings(callback: CallbackQuery):
         f"📏 Возраст: от {profile.age_min_preference} до {profile.age_max_preference}\n"
         f"🏙 Город: {profile.city}"
     )
-    await callback.message.edit_text(text, reply_markup=search_settings_keyboard())
-    await callback.answer()
+    await safe_edit(callback, text, reply_markup=search_settings_keyboard())
 
 
 @router.callback_query(F.data == "set_looking_for")
 async def set_looking_for(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(edit_field="looking_for")
-    await state.set_state(Registration.looking_for)
-    await callback.message.edit_text(
-        "🔍 Кого ищем?",
-        reply_markup=gender_keyboard(),
-    )
     await callback.answer()
+    await state.update_data(edit_field="looking_for")
+    await state.set_state(EditProfile.looking_for)
+    await safe_edit(callback, "🔍 Кого ищем?", reply_markup=gender_keyboard())
 
 
 @router.callback_query(F.data == "set_age_min")
 async def set_age_min(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(edit_field="age_min_preference")
-    await state.set_state(Registration.age)
-    await callback.message.edit_text("📏 Минимальный возраст (от 16):")
     await callback.answer()
+    await state.update_data(edit_field="age_min_preference")
+    await state.set_state(EditProfile.age)
+    try:
+        await callback.message.edit_text("📏 Минимальный возраст (от 16):")
+    except Exception:
+        await callback.message.answer("📏 Минимальный возраст (от 16):")
 
 
 @router.callback_query(F.data == "set_age_max")
 async def set_age_max(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(edit_field="age_max_preference")
-    await state.set_state(Registration.age)
-    await callback.message.edit_text("📏 Максимальный возраст (до 99):")
     await callback.answer()
+    await state.update_data(edit_field="age_max_preference")
+    await state.set_state(EditProfile.age)
+    try:
+        await callback.message.edit_text("📏 Максимальный возраст (до 99):")
+    except Exception:
+        await callback.message.answer("📏 Максимальный возраст (до 99):")
 
 
 @router.callback_query(F.data == "set_city")
 async def set_city(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(edit_field="city")
-    await state.set_state(Registration.city)
-    await callback.message.edit_text("🏙 Введите город:")
     await callback.answer()
+    await state.update_data(edit_field="city")
+    await state.set_state(EditProfile.city)
+    try:
+        await callback.message.edit_text("🏙 Введите город:")
+    except Exception:
+        await callback.message.answer("🏙 Введите город:")

@@ -8,6 +8,13 @@ from app.services.profile_service import get_or_create_user, has_profile, is_ban
 router = Router()
 
 
+async def safe_edit(callback: CallbackQuery, text: str, reply_markup=None):
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     if await is_banned(message.from_user.id):
@@ -51,16 +58,13 @@ async def cmd_menu(message: Message):
 
 @router.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery):
+    await callback.answer()
     if await is_banned(callback.from_user.id):
         await callback.message.answer("🚫 Вы забанены в боте.")
         return
 
     if not await has_profile(callback.from_user.id):
-        await callback.message.edit_text("Сначала создайте анкету через /register")
+        await callback.message.answer("Сначала создайте анкету через /register")
         return
 
-    await callback.message.edit_text(
-        "🏠 Главное меню:",
-        reply_markup=main_menu_keyboard(),
-    )
-    await callback.answer()
+    await safe_edit(callback, "🏠 Главное меню:", reply_markup=main_menu_keyboard())

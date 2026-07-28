@@ -8,11 +8,15 @@ def anyio_backend():
 
 @pytest.fixture(autouse=True)
 async def clean_db():
-    from app.database import async_session
+    from app.database import async_session, init_db
     from sqlalchemy import text
+    await init_db()
     async with async_session() as session:
         for table in ("payments", "advertisements", "complaints", "matches", "likes", "blocks", "profiles", "users"):
-            await session.execute(text(f"DELETE FROM {table}"))
+            try:
+                await session.execute(text(f"DELETE FROM {table}"))
+            except Exception:
+                pass
         await session.commit()
 
 
@@ -68,10 +72,10 @@ async def test_deactivate_inactive_profiles():
     from app.database import init_db, async_session
     from app.models import User, Profile
     from app.services.profile_service import deactivate_inactive_profiles
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     await init_db()
     async with async_session() as session:
-        user = User(telegram_id=992030, last_active_at=datetime.utcnow() - timedelta(days=31))
+        user = User(telegram_id=992030, last_active_at=datetime.now(timezone.utc) - timedelta(days=31))
         session.add(user)
         await session.commit()
         await session.refresh(user)

@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+def _utcnow():
+    return datetime.datetime.now(datetime.UTC)
+
+
 class Advertisement(Base):
     __tablename__ = "advertisements"
 
@@ -17,5 +21,5 @@ class Advertisement(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     impressions_count: Mapped[int] = mapped_column(Integer, default=0)
     clicks_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
