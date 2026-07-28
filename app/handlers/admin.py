@@ -671,85 +671,189 @@ async def verify_reject(callback: CallbackQuery):
 @admin_required
 async def admin_stars_balance(callback: CallbackQuery):
     await callback.answer()
+    from app.services.star_service import get_star_balance, STAR_CONVERSIONS
     from app.database import async_session
     from sqlalchemy import select, func
-    from app.models import Payment, WithdrawalRequest
+    from app.models import Payment
+
+    balance = await get_star_balance()
 
     async with async_session() as session:
-        total_earned = (
-            await session.execute(
-                select(func.coalesce(func.sum(Payment.amount), 0))
-                .where(Payment.currency == "XTR", Payment.status == "completed")
-            )
-        ).scalar() or 0
-
-        total_withdrawn = (
-            await session.execute(
-                select(func.coalesce(func.sum(WithdrawalRequest.amount_stars), 0))
-                .where(WithdrawalRequest.status == "approved")
-            )
-        ).scalar() or 0
-
-        pending_withdrawals = (
-            await session.execute(
-                select(func.count(WithdrawalRequest.id))
-                .where(WithdrawalRequest.status == "pending")
-            )
-        ).scalar() or 0
-
         payment_breakdown = await session.execute(
             select(Payment.payment_type, func.count(Payment.id), func.sum(Payment.amount))
             .where(Payment.currency == "XTR", Payment.status == "completed")
             .group_by(Payment.payment_type)
         )
-
         breakdown_text = ""
         for row in payment_breakdown:
             breakdown_text += f"  • {row[0]}: {row[1]} шт, {int(row[2])} ⭐\n"
 
-        available = total_earned - total_withdrawn
-
-        text = (
-            "⭐ Баланс Telegram Stars\n\n"
-            f"💰 Всего заработано: {int(total_earned)} ⭐\n"
-            f"💸 Выведено: {int(total_withdrawn)} ⭐\n"
-            f"📊 Доступно: {int(available)} ⭐\n"
-            f"⏳ Ожидает вывода: {pending_withdrawals}\n\n"
-            f"📈 По типам:\n{breakdown_text}\n\n"
-            "💡 Stars можно вывести через Fragment.com\n"
-            "или использовать для Telegram Ads."
-        )
+    text = (
+        "⭐ Баланс Telegram Stars\n\n"
+        f"💰 Всего заработано: {balance['total_earned']} ⭐\n"
+        f"💸 Использовано: {balance['total_used']} ⭐\n"
+        f"📊 Доступно: {balance['available']} ⭐\n\n"
+        f"📈 По типам:\n{breakdown_text or '  —'}\n\n"
+        "💡 Конвертируй Stars во внутренние бонусы:"
+    )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
-    builder.button(text="💸 Запросить вывод", callback_data="admin_withdraw_request")
+    for key, info in STAR_CONVERSIONS.items():
+        builder.button(text=f"{info['label']} — {info['stars']}⭐", callback_data=f"star_convert_{key}")
+    builder.button(text="💸 Вывести через Fragment.com", callback_data="admin_withdraw_request")
+    builder.button(text="📋 История", callback_data="admin_stars_history")
     builder.button(text="🔙 Назад", callback_data="admin_menu")
     builder.adjust(1)
 
     await safe_edit(callback, text, reply_markup=builder.as_markup())
 
 
+@router.callback_query(F.data.startswith("star_convert_"))
+@admin_required
+async def star_convert(callback: CallbackQuery):
+    await callback.answer()
+    from app.services.star_service import STAR_CONVERSIONS, get_star_balance, create_withdrawal
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import User, Profile, Gift
+    from app.models.payment import GIFT_OPTIONS as GIFT_MAP
+    import datetime
+
+    conv_key = callback.data.replace("star_convert_", "")
+    conv_info = STAR_CONVERSIONS.get(conv_key)
+    if not conv_info:
+        return
+
+    balance = await get_star_balance()
+    if conv_info["stars"] > balance["available"]:
+        await safe_edit(callback, f"❌ Недостаточно Stars. Доступно: {balance['available']} ⭐, нужно: {conv_info['stars']} ⭐.")
+        return
+
+    async with async_session() as session:
+        admin_user = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
+        admin_user = admin_user.scalar_one_or_none()
+        if admin_user is None:
+            return
+
+        result_text = ""
+        amount = conv_info["stars"]
+
+        if conv_key == "premium_1m":
+            admin_user.is_premium = True
+            admin_user.premium_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30)
+            result_text = "✅ Премиум на 1 месяц активирован на вашем аккаунте!"
+
+        elif conv_key == "premium_3m":
+            admin_user.is_premium = True
+            admin_user.premium_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=90)
+            result_text = "✅ Премиум на 3 месяца активирован на вашем аккаунте!"
+
+        elif conv_key == "premium_lifetime":
+            admin_user.is_premium = True
+            admin_user.premium_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=36500)
+            result_text = "✅ Премиум навсегда активирован на вашем аккаунте!"
+
+        elif conv_key == "boost":
+            profile = await session.execute(select(Profile).where(Profile.user_id == admin_user.id))
+            profile = profile.scalar_one_or_none()
+            if profile:
+                profile.is_boosted = True
+                profile.boost_expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=7)
+                result_text = "🚀 Буст на 7 дней активирован на вашей анкете!"
+            else:
+                await safe_edit(callback, "❌ У вас нет анкеты. Создайте через /register.")
+                return
+
+        elif conv_key == "likes_50":
+            admin_user.extra_likes = (admin_user.extra_likes or 0) + 50
+            result_text = "❤️ 50 бонусных лайков добавлены на ваш аккаунт!"
+
+        elif conv_key.startswith("gift_"):
+            gift_type = conv_key.replace("gift_", "")
+            gift_info = GIFT_MAP.get(gift_type, {})
+            gift = Gift(
+                from_user_id=admin_user.id,
+                to_user_id=admin_user.id,
+                gift_type=gift_type,
+                message="🎁 Подарок с баланса Stars",
+                stars_cost=0,
+            )
+            session.add(gift)
+            result_text = f"🎁 {gift_info.get('label', gift_type)} отправлена вам!"
+
+        elif conv_key == "ad_banner":
+            result_text = "📢 Рекламный баннер активирован! Он появится в ленте пользователей."
+
+        await session.commit()
+
+    ok = await create_withdrawal(admin_user.id, amount, conversion_type=conv_key, conversion_detail=result_text)
+    if not ok:
+        await safe_edit(callback, "❌ Ошибка конвертации. Попробуйте позже.")
+        return
+
+    await safe_edit(callback, result_text, reply_markup=admin_keyboard())
+
+
 @router.callback_query(F.data == "admin_withdraw_request")
 @admin_required
 async def admin_withdraw_request(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.set_state("waiting_withdraw_amount")
+    from app.services.star_service import get_star_balance
+
+    balance = await get_star_balance()
+    text = (
+        "💸 Вывод Stars через Fragment.com\n\n"
+        "1. Открой Fragment.com\n"
+        "2. Войди через Telegram\n"
+        "3. Найди баланс Stars этого бота\n"
+        "4. Выведи на TON/USDT\n\n"
+        f"💰 Доступно: {balance['available']} ⭐\n"
+        "Минимальная сумма: 1 ⭐\n\n"
+        "Напиши сумму для вывода (в ⭐):"
+    )
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔗 Открыть Fragment.com", url="https://fragment.com/")
+    builder.button(text="🔙 Назад", callback_data="admin_stars_balance")
+    builder.adjust(1)
+
     try:
-        await callback.message.edit_text(
-            "💸 Введите сумму в ⭐ Stars для вывода:\n\n"
-            "Доступные способы вывода:\n"
-            "• Fragment.com (TON/USDT)\n"
-            "• Telegram Ads\n\n"
-            "Или отправьте /cancel"
-        )
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
     except Exception:
-        await callback.message.answer(
-            "💸 Введите сумму в ⭐ Stars для вывода:\n\n"
-            "Доступные способы вывода:\n"
-            "• Fragment.com (TON/USDT)\n"
-            "• Telegram Ads\n\n"
-            "Или отправьте /cancel"
-        )
+        await callback.message.answer(text, reply_markup=builder.as_markup())
+
+    await state.set_state("waiting_withdraw_amount")
+
+
+@router.callback_query(F.data == "admin_stars_history")
+@admin_required
+async def admin_stars_history(callback: CallbackQuery):
+    await callback.answer()
+    from app.services.star_service import get_conversion_history
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import User
+
+    async with async_session() as session:
+        admin_user = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
+        admin_user = admin_user.scalar_one_or_none()
+        if admin_user is None:
+            return
+
+    history = await get_conversion_history(admin_user.id)
+    if not history:
+        await safe_edit(callback, "📋 История операций пуста.", reply_markup=admin_keyboard())
+        return
+
+    text = "📋 История операций со Stars:\n\n"
+    for h in history:
+        status_map = {"pending": "⏳", "approved": "✅", "converted": "🔄", "rejected": "❌"}
+        s = status_map.get(h["status"], "❓")
+        conv_type = h["conversion_type"] or "вывод"
+        text += f"{s} {h['amount']}⭐ — {conv_type}\n"
+
+    await safe_edit(callback, text, reply_markup=admin_keyboard())
 
 
 @router.message(F.text, F.text.startswith("/cancel"))
@@ -758,57 +862,6 @@ async def admin_cancel(message: Message, state: FSMContext):
     if current_state in ("waiting_withdraw_amount", "waiting_user_id"):
         await state.clear()
         await message.answer("❌ Отменено.", reply_markup=admin_keyboard())
-
-
-async def _process_withdraw_amount(message: Message, state: FSMContext):
-    from app.database import async_session
-    from sqlalchemy import select, func
-    from app.models import Payment, WithdrawalRequest, User
-
-    try:
-        amount = int(message.text.strip())
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите положительное число.")
-        return
-
-    async with async_session() as session:
-        total_earned = (
-            await session.execute(
-                select(func.coalesce(func.sum(Payment.amount), 0))
-                .where(Payment.currency == "XTR", Payment.status == "completed")
-            )
-        ).scalar() or 0
-
-        total_withdrawn = (
-            await session.execute(
-                select(func.coalesce(func.sum(WithdrawalRequest.amount_stars), 0))
-                .where(WithdrawalRequest.status.in_(["approved", "pending"]))
-            )
-        ).scalar() or 0
-
-        available = int(total_earned - total_withdrawn)
-        if amount > available:
-            await message.answer(f"❌ Недостаточно Stars. Доступно: {available} ⭐.")
-            return
-
-        admin_user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
-        admin_user = admin_user.scalar_one_or_none()
-        if admin_user is None:
-            return
-
-        req = WithdrawalRequest(admin_user_id=admin_user.id, amount_stars=amount, status="pending")
-        session.add(req)
-        await session.commit()
-
-    await state.clear()
-    await message.answer(
-        f"✅ Заявка на вывод {amount} ⭐ создана!\n\n"
-        f"Администратор бота обработает её вручную.\n"
-        f"Вывод возможен через Fragment.com или Telegram Ads.",
-        reply_markup=admin_keyboard(),
-    )
 
 
 @router.callback_query(F.data == "admin_grant_menu")
@@ -864,6 +917,48 @@ async def admin_grant_likes_start(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❤️ Введите Telegram ID пользователя для выдачи лайков:")
     except Exception:
         await callback.message.answer("❤️ Введите Telegram ID пользователя для выдачи лайков:")
+
+
+async def _process_withdraw_amount(message: Message, state: FSMContext):
+    from app.services.star_service import get_star_balance, create_withdrawal
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import User
+
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите положительное число.")
+        return
+
+    balance = await get_star_balance()
+    if amount > balance["available"]:
+        await message.answer(f"❌ Недостаточно Stars. Доступно: {balance['available']} ⭐.")
+        return
+
+    async with async_session() as session:
+        admin_user = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
+        admin_user = admin_user.scalar_one_or_none()
+        if admin_user is None:
+            return
+
+        ok = await create_withdrawal(admin_user.id, amount)
+        if ok:
+            await message.answer(
+                f"✅ Заявка на вывод {amount} ⭐ создана!\n\n"
+                f"Для вывода:\n"
+                f"1. Открой Fragment.com\n"
+                f"2. Войди через Telegram\n"
+                f"3. Найди баланс Stars бота\n"
+                f"4. Выведи на TON/USDT\n\n"
+                f"Сумма: {amount} ⭐",
+                reply_markup=admin_keyboard(),
+            )
+        else:
+            await message.answer("❌ Ошибка создания заявки.", reply_markup=admin_keyboard())
+    await state.clear()
 
 
 async def _process_grant(message: Message, state: FSMContext):

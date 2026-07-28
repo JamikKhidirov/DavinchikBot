@@ -41,6 +41,8 @@ async def init_db():
             "ALTER TABLE likes ADD COLUMN superlike_message VARCHAR(256)",
             "ALTER TABLE payments ADD COLUMN currency VARCHAR(16) DEFAULT 'XTR'",
             "ALTER TABLE payments ADD COLUMN description TEXT",
+            "ALTER TABLE withdrawal_requests ADD COLUMN conversion_type VARCHAR(32)",
+            "ALTER TABLE withdrawal_requests ADD COLUMN conversion_detail VARCHAR(256)",
         ]
         for sql in migrations:
             try:

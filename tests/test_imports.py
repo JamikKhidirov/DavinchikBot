@@ -56,6 +56,8 @@ def test_services_import():
     assert gift_service is not None
     assert geo_service is not None
     assert ads_purchase_service is not None
+    from app.services import star_service
+    assert star_service is not None
 
 
 def test_keyboards_import():

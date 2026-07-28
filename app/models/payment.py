@@ -30,5 +30,7 @@ class WithdrawalRequest(Base):
     admin_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     amount_stars: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending")
+    conversion_type: Mapped[str] = mapped_column(String(32), nullable=True)
+    conversion_detail: Mapped[str] = mapped_column(String(256), nullable=True)
     wallet_address: Mapped[str] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
