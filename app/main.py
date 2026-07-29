@@ -53,6 +53,11 @@ async def on_startup(bot: Bot):
     if expired_boost:
         logger.info(f"Истекших бустов: {expired_boost}")
 
+    from app.services.referral_service import check_and_revoke_expired_trials
+    expired_trials = await check_and_revoke_expired_trials()
+    if expired_trials:
+        logger.info(f"Истекших премиум-триалов: {expired_trials}")
+
     from app.setup_bot import setup_bot
     await setup_bot(bot)
     logger.info("Бот запущен!")

@@ -152,6 +152,15 @@ async def process_like(callback: CallbackQuery):
             await callback.message.answer(
                 f"⚠️ Осталось {remaining} лайков на сегодня. ⭐ Премиум — без лимитов!",
             )
+    elif result == "already_exists":
+        await callback.message.answer("❌ Вы уже оценили этого пользователя.")
+    elif result == "blocked":
+        await callback.message.answer("❌ Невозможно: пользователь заблокирован.")
+    elif result == "limit_exceeded":
+        await callback.message.answer(
+            "❌ Лимит лайков исчерпан.\n"
+            "Приведи друга или купи ⭐ Премиум!",
+        )
 
     await show_next_profile(callback)
 
@@ -172,12 +181,24 @@ async def process_dislike(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("superlike_"))
 async def process_superlike_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        return
+
+    can_like, remaining = await check_like_limit(callback.from_user.id)
+    if not can_like:
+        await callback.message.answer(
+            "❌ Недостаточно лайков для суперлайка.\n"
+            "Купи ⭐ Премиум для безлимита или приведи друга!"
+        )
+        return
+
     target_id = int(callback.data.split("_")[1])
     await state.set_state(SuperlikeMessage.text)
     await state.update_data(superlike_target_id=target_id)
     await safe_edit(callback,
-        "⭐ Суперлайк! Напишите короткое сообщение, которое увидит пользователь:\n\n"
-        "(Или отправьте '-' чтобы отправить без сообщения)"
+        "⭐ Суперлайк! Напиши короткое сообщение (оно будет отправлено анонимно):\n\n"
+        "(Или отправь '-' чтобы отправить без сообщения)"
     )
 
 
@@ -232,6 +253,15 @@ async def process_superlike_message(message: Message, state: FSMContext):
                 "superlike_message": msg_text,
             }
             await notify_superlike(message.bot, target_user.telegram_id, liker_data, liker_user_id=my_user.id)
+    elif result == "already_exists":
+        await message.answer("❌ Вы уже отправили суперлайк этому пользователю.")
+    elif result == "blocked":
+        await message.answer("❌ Невозможно отправить суперлайк.")
+    elif result == "limit_exceeded":
+        await message.answer(
+            "❌ Лимит лайков исчерпан.\n"
+            "Приведи друга или купи ⭐ Премиум!",
+        )
 
     await state.clear()
 

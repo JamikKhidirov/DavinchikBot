@@ -33,6 +33,7 @@ class Profile(Base):
     is_boosted: Mapped[bool] = mapped_column(Boolean, default=False)
     boost_expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
     verification_photo_id: Mapped[str] = mapped_column(String(512), nullable=True)
+    is_referral_badge: Mapped[bool] = mapped_column(Boolean, default=False)
     views_count: Mapped[int] = mapped_column(Integer, default=0)
     age_min_preference: Mapped[int] = mapped_column(Integer, default=18)
     age_max_preference: Mapped[int] = mapped_column(Integer, default=99)

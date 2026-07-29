@@ -223,7 +223,7 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     )
 
     try:
-        await create_profile(
+        profile = await create_profile(
             telegram_id=callback.from_user.id,
             name=data["name"],
             age=data["age"],
@@ -239,6 +239,16 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Ошибка при создании анкеты. Попробуйте позже.")
         await state.clear()
         return
+
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import User
+    async with async_session() as session:
+        user = await session.execute(select(User).where(User.id == profile.user_id))
+        user = user.scalar_one_or_none()
+        if user and user.referral_bonus_claimed:
+            profile.is_referral_badge = True
+            await session.commit()
 
     await state.clear()
     await safe_edit_reg(callback,

@@ -51,30 +51,24 @@ async def notify_like(bot: Bot, user_telegram_id: int, liker_profile: dict, like
 
 
 async def notify_superlike(bot: Bot, user_telegram_id: int, liker_profile: dict, liker_user_id: int = None):
-    text = (
-        f"⭐ Суперлайк! Кому-то вы очень понравились!\n\n"
-        f"{liker_profile.get('name', '?')}, {liker_profile.get('age', '?')} лет\n"
-        f"🏙 {liker_profile.get('city', '?')}\n"
-        f"{liker_profile.get('bio', '')}"
-    )
     msg = liker_profile.get("superlike_message", "")
+    text = (
+        f"⭐ Кто-то отправил тебе суперлайк!\n\n"
+        f"Ты очень понравился(ась) незнакомцу"
+    )
     if msg:
         text += f"\n\n💬 Сообщение: {msg}"
 
-    photos = liker_profile.get("photos", [])
     kb = None
     if liker_user_id:
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
-        builder.button(text="❤️ Ответить", callback_data=f"like_{liker_user_id}")
+        builder.button(text="❤️ Ответить взаимностью", callback_data=f"like_{liker_user_id}")
         builder.button(text="👎 Пропустить", callback_data="next_search")
         builder.adjust(2)
         kb = builder.as_markup()
     try:
-        if photos:
-            await bot.send_photo(user_telegram_id, photos[0], caption=text, reply_markup=kb)
-        else:
-            await bot.send_message(user_telegram_id, text, reply_markup=kb)
+        await bot.send_message(user_telegram_id, text, reply_markup=kb)
     except Exception:
         pass
 

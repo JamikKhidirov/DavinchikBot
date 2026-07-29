@@ -13,7 +13,7 @@ from app.services.profile_service import (
     get_profile_stats, request_verification, get_user_by_telegram_id,
 )
 from app.services.geo_service import update_location, update_search_radius
-from app.services.referral_service import get_or_create_referral_code, get_referral_stats
+from app.services.referral_service import get_or_create_referral_code, get_referral_stats, REFERRER_BONUS_LIKES, REFERRED_BONUS_LIKES
 from app.states.edit_profile import EditProfile, Verification
 
 router = Router()
@@ -46,6 +46,7 @@ async def show_my_profile(callback: CallbackQuery):
 
     verified_badge = "✅ Верифицирован(а)" if profile.is_verified else "❌ Не верифицирован(а)"
     premium_badge = "⭐ Премиум" if user and user.is_premium else "👤 Бесплатный"
+    referral_badge = " 🏆 Реферал" if profile.is_referral_badge else ""
     interests_text = ", ".join(profile.interests or []) if profile.interests else "—"
 
     text = (
@@ -58,7 +59,7 @@ async def show_my_profile(callback: CallbackQuery):
         f"📄 О себе: {profile.bio or '—'}\n"
         f"🎯 Интересы: {interests_text}\n"
         f"📸 Фото: {len(profile.photos or [])} | 🎬 Видео: {len(profile.videos or [])}\n"
-        f"{verified_badge} | {premium_badge}\n\n"
+        f"{verified_badge} | {premium_badge}{referral_badge}\n\n"
         f"📊 Статистика:\n"
         f"👁 Просмотров: {stats.get('views', 0)}\n"
         f"❤️ Получено лайков: {stats.get('likes_received', 0)}\n"
@@ -313,7 +314,8 @@ async def show_search_settings(callback: CallbackQuery):
         "🎯 Настройки поиска:\n\n"
         f"👫 Ищу: {looking_map.get(profile.looking_for, profile.looking_for)}\n"
         f"📏 Возраст: от {profile.age_min_preference} до {profile.age_max_preference}\n"
-        f"🏙 Город: {profile.city}"
+        f"🏙 Город: {profile.city}\n"
+        f"🗺 Радиус поиска: {profile.search_radius} км"
     )
     await safe_edit(callback, text, reply_markup=search_settings_keyboard())
 
@@ -455,13 +457,23 @@ async def show_referral(callback: CallbackQuery):
     bot_username = (await callback.bot.me()).username
     link = f"https://t.me/{bot_username}?start=ref_{code}"
 
+    trial_text = ""
+    if stats.get("premium_trial"):
+        trial_text = f"\n⭐ Премиум-триал активен: {stats['premium_trial_days']} дн."
+    else:
+        trial_text = "\n⭐ Премиум-триал: не активен"
+
     text = (
-        "🔗 Реферальная программа\n\n"
+        "🔗 <b>Реферальная программа</b>\n\n"
         f"Твоя ссылка: {link}\n\n"
-        "🔸 Приведи друзей и получи +5 лайков за каждого!\n"
-        "🔸 Друг тоже получает бонус\n\n"
+        "🎁 <b>Бонусы за каждого друга:</b>\n"
+        f"🔸 Тебе: +{REFERRER_BONUS_LIKES} лайков + 7 дней ⭐ Премиум\n"
+        f"🔸 Другу: +{REFERRED_BONUS_LIKES} лайков + 7 дней ⭐ Премиум + 🏆 значок\n\n"
+        "🔥 Приведи 3 друзей — получи <b>ещё +50 лайков</b>\n"
+        "🔥 Приведи 5 друзей — <b>Премиум на месяц бесплатно</b>\n\n"
         f"📊 Приведено друзей: {stats['count']}\n"
         f"💎 Бонусных лайков: {stats['bonus_likes']}"
+        f"{trial_text}"
     )
     await safe_edit(callback, text, reply_markup=referral_keyboard(code))
 
@@ -470,11 +482,18 @@ async def show_referral(callback: CallbackQuery):
 async def show_referral_stats(callback: CallbackQuery):
     await callback.answer()
     stats = await get_referral_stats(callback.from_user.id)
+    trial_text = ""
+    if stats.get("premium_trial"):
+        trial_text = f"\n⭐ Премиум-триал: {stats['premium_trial_days']} дн."
     await safe_edit(callback,
         f"📊 Реферальная статистика:\n\n"
-        f"👥 Приведено: {stats['count']}\n"
+        f"👥 Приведено друзей: {stats['count']}\n"
         f"💎 Бонусных лайков: {stats['bonus_likes']}\n"
-        f"🔗 Код: {stats['code']}",
+        f"🔗 Твой код: {stats['code']}\n"
+        f"{trial_text}\n\n"
+        f"🎁 За каждого друга:\n"
+        f"• Тебе: +{REFERRER_BONUS_LIKES} лайков + 7 дней Премиум\n"
+        f"• Другу: +{REFERRED_BONUS_LIKES} лайков + 7 дней Премиум + значок 🏆",
         reply_markup=referral_keyboard(stats['code']),
     )
 

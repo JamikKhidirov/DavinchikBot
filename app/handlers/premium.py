@@ -127,6 +127,26 @@ async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
     telegram_id = message.from_user.id
 
+    from app.database import async_session
+    from app.models import Payment
+    from app.services.profile_service import get_user_by_telegram_id
+    import datetime
+
+    async with async_session() as session:
+        user = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = user.scalar_one_or_none()
+        if user:
+            payment = Payment(
+                user_id=user.id,
+                amount=message.successful_payment.total_amount,
+                currency="XTR",
+                payment_type=payload.split("_")[0],
+                status="completed",
+                description=payload,
+            )
+            session.add(payment)
+            await session.commit()
+
     if payload.startswith("premium_"):
         parts = payload.split("_")
         plan_id = parts[1]
@@ -172,11 +192,13 @@ async def successful_payment(message: Message):
             try:
                 to_user = await get_user_by_id(to_user_id)
                 if to_user:
-                    my_profile = await get_profile_by_telegram_id(telegram_id)
-                    name = my_profile.name if my_profile else "Пользователь"
+                    from app.services.block_service import is_blocked
+                    my_user = await get_user_by_telegram_id(telegram_id)
+                    if my_user and await is_blocked(my_user.id, to_user.id):
+                        return
                     await message.bot.send_message(
                         to_user.telegram_id,
-                        f"🎁 Вы получили подарок {gift_info.get('label', gift_type)} от {name}!"
+                        f"🎁 Вам подарили {gift_info.get('label', gift_type)}!"
                         + (f"\n💬 {msg_text}" if msg_text else ""),
                     )
             except Exception:
@@ -185,9 +207,14 @@ async def successful_payment(message: Message):
             await message.answer("❌ Ошибка отправки подарка.", reply_markup=main_menu_keyboard())
 
     elif payload.startswith("ad_banner_"):
+        from app.services.ad_service import create_ad
+        ad = await create_ad(
+            text="Рекламный баннер (оплачено через Stars)",
+        )
         await message.answer(
-            "✅ Рекламный баннер оплачен! Скоро он появится в ленте пользователей.\n"
-            "Свяжитесь с администратором для уточнения деталей.",
+            "✅ Рекламный баннер оплачен и создан!\n"
+            "Он появится в ленте пользователей. "
+            "Свяжитесь с администратором для настройки текста.",
             reply_markup=main_menu_keyboard(),
         )
 

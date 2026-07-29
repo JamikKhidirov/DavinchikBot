@@ -64,6 +64,7 @@ async def activate_premium(telegram_id: int, plan_id: str) -> bool:
             user.is_premium = True
             user.premium_expires_at = now + datetime.timedelta(days=plan["days"])
 
+        user.premium_trial_expires_at = None
         await session.commit()
         return True
 
@@ -92,12 +93,21 @@ async def check_premium_expired():
     now = datetime.datetime.now(UTC)
     async with async_session() as session:
         result = await session.execute(
-            select(User).where(and_(User.is_premium == True, User.premium_expires_at < now))
+            select(User).where(
+                and_(
+                    User.is_premium == True,
+                    User.premium_expires_at.isnot(None),
+                    User.premium_expires_at < now,
+                )
+            )
         )
         expired = result.scalars().all()
         for u in expired:
-            u.is_premium = False
-            u.premium_expires_at = None
+            if u.premium_trial_expires_at and u.premium_trial_expires_at > now:
+                u.premium_expires_at = None
+            else:
+                u.is_premium = False
+                u.premium_expires_at = None
         await session.commit()
         return len(expired)
 

@@ -20,17 +20,18 @@ async def check_like_limit(telegram_id: int) -> tuple[bool, int]:
         if user.is_premium:
             return True, 999
 
+        total_available = (user.extra_likes or 0)
         today = datetime.datetime.now(UTC).date()
         if user.last_like_date and user.last_like_date.date() == today:
-            remaining = config.max_likes_per_day - user.daily_likes_count
-            if remaining <= 0:
+            remaining = config.max_likes_per_day - user.daily_likes_count + total_available
+            if remaining <= 0 and total_available <= 0:
                 return False, 0
             return True, remaining
         else:
             user.daily_likes_count = 0
             user.last_like_date = datetime.datetime.now(UTC)
             await session.commit()
-            return True, config.max_likes_per_day
+            return True, config.max_likes_per_day + total_available
 
 
 async def like_profile(from_telegram_id: int, to_user_id: int, is_superlike: bool = False, superlike_message: str = None) -> Optional[str]:
@@ -43,6 +44,15 @@ async def like_profile(from_telegram_id: int, to_user_id: int, is_superlike: boo
         if from_user.id == to_user_id:
             return None
 
+        to_user = await session.execute(select(User).where(User.id == to_user_id))
+        to_user = to_user.scalar_one_or_none()
+        if to_user is None:
+            return None
+
+        from app.services.block_service import is_blocked
+        if await is_blocked(from_user.id, to_user.id):
+            return "blocked"
+
         result = await session.execute(
             select(Like).where(
                 and_(Like.from_user_id == from_user.id, Like.to_user_id == to_user_id)
@@ -52,13 +62,19 @@ async def like_profile(from_telegram_id: int, to_user_id: int, is_superlike: boo
         if existing:
             return "already_exists"
 
-        if not is_superlike:
+        if not from_user.is_premium:
             from_user.daily_likes_count += 1
             from_user.last_like_date = datetime.datetime.now(UTC)
+            if from_user.daily_likes_count > config.max_likes_per_day:
+                if (from_user.extra_likes or 0) > 0:
+                    from_user.extra_likes -= 1
+                else:
+                    await session.rollback()
+                    return "limit_exceeded"
 
         like = Like(
             from_user_id=from_user.id,
-            to_user_id=to_user_id,
+            to_user_id=to_user.id,
             is_like=True,
             is_superlike=is_superlike,
             superlike_message=superlike_message if is_superlike else None,
@@ -68,11 +84,11 @@ async def like_profile(from_telegram_id: int, to_user_id: int, is_superlike: boo
 
         mutual = await session.execute(
             select(Like).where(
-                and_(Like.from_user_id == to_user_id, Like.to_user_id == from_user.id, Like.is_like == True)
+                and_(Like.from_user_id == to_user.id, Like.to_user_id == from_user.id, Like.is_like == True)
             )
         )
         if mutual.scalar_one_or_none():
-            match = Match(user1_id=min(from_user.id, to_user_id), user2_id=max(from_user.id, to_user_id))
+            match = Match(user1_id=min(from_user.id, to_user.id), user2_id=max(from_user.id, to_user.id))
             session.add(match)
             await session.commit()
             return "match"
@@ -100,6 +116,11 @@ async def dislike_profile(from_telegram_id: int, to_user_id: int) -> bool:
         else:
             dislike = Like(from_user_id=from_user.id, to_user_id=to_user_id, is_like=False)
             session.add(dislike)
+
+        u1, u2 = min(from_user.id, to_user_id), max(from_user.id, to_user_id)
+        await session.execute(
+            delete(Match).where(and_(Match.user1_id == u1, Match.user2_id == u2))
+        )
 
         await session.commit()
         return True
@@ -164,17 +185,17 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             candidates_list = list(candidates.scalars().all())
 
         if not candidates_list:
-            seen_filters = [*base_filters, Profile.user_id.not_in(seen_subq)]
+            wider_filters = [Profile.is_active == True, Profile.user_id.not_in(blocked_by_me), Profile.user_id.not_in(blocked_me)]
             candidates = await session.execute(
                 select(Profile)
-                .where(and_(*seen_filters))
-                .order_by(*sort_exprs(), Profile.created_at.desc())
+                .where(and_(*wider_filters))
+                .order_by(Profile.created_at.desc())
                 .limit(5)
             )
             candidates_list = list(candidates.scalars().all())
 
         if not candidates_list:
-            last_filters = [Profile.is_active == True, Profile.user_id.not_in(seen_subq)]
+            last_filters = [Profile.is_active == True, Profile.user_id != user.id]
             candidates = await session.execute(
                 select(Profile)
                 .where(and_(*last_filters))

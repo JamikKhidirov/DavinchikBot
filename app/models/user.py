@@ -34,6 +34,8 @@ class User(Base):
     referral_code: Mapped[str] = mapped_column(String(16), unique=True, default=_gen_ref_code)
     referred_by_id: Mapped[int] = mapped_column(Integer, nullable=True)
     extra_likes: Mapped[int] = mapped_column(Integer, default=0)
+    premium_trial_expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+    referral_bonus_claimed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow

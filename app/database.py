@@ -43,6 +43,9 @@ async def init_db():
             "ALTER TABLE payments ADD COLUMN description TEXT",
             "ALTER TABLE withdrawal_requests ADD COLUMN conversion_type VARCHAR(32)",
             "ALTER TABLE withdrawal_requests ADD COLUMN conversion_detail VARCHAR(256)",
+            "ALTER TABLE users ADD COLUMN premium_trial_expires_at DATETIME",
+            "ALTER TABLE users ADD COLUMN referral_bonus_claimed BOOLEAN DEFAULT 0",
+            "ALTER TABLE profiles ADD COLUMN is_referral_badge BOOLEAN DEFAULT 0",
         ]
         for sql in migrations:
             try:
