@@ -134,11 +134,29 @@ async def handle_chat_message(message: Message, state: FSMContext):
         builder.button(text="💬 Все чаты", callback_data="my_chats")
         builder.adjust(1)
 
+        from app.services.profile_service import get_profile_by_telegram_id
+        my_profile = await get_profile_by_telegram_id(message.from_user.id)
+        sender_name = my_profile.name if my_profile else (message.from_user.first_name or "Пользователь")
+
         await message.answer(
             f"✅ Сообщение отправлено!\n\n"
             f"Ты: {message.text}",
             reply_markup=builder.as_markup(),
         )
+
+        if info:
+            notify_builder = InlineKeyboardBuilder()
+            notify_builder.button(text="💬 Ответить", callback_data=f"open_chat_{match_id}")
+            notify_builder.button(text="💬 Все чаты", callback_data="my_chats")
+            notify_builder.adjust(1)
+            try:
+                await message.bot.send_message(
+                    info["partner_telegram_id"],
+                    f"💬 Новое сообщение от {sender_name}:\n\n{message.text}",
+                    reply_markup=notify_builder.as_markup(),
+                )
+            except Exception:
+                pass
     else:
         await message.answer("❌ Ошибка отправки. Попробуйте ещё раз.")
 

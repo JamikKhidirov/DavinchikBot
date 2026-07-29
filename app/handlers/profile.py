@@ -73,10 +73,10 @@ async def show_my_profile(callback: CallbackQuery):
         await callback.message.delete()
     except Exception:
         pass
-    if photos:
-        await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
-    elif videos:
+    if videos:
         await callback.message.answer_video(videos[0], caption=text, reply_markup=kb)
+    elif photos:
+        await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
     else:
         await callback.message.answer(text, reply_markup=kb)
 
@@ -287,6 +287,52 @@ async def handle_verify_photo(message: Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await request_verification(message.from_user.id, photo_id)
     await state.clear()
+
+    from app.services.profile_service import get_user_by_telegram_id, get_profile_by_telegram_id
+    from app.config import config
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    user = await get_user_by_telegram_id(message.from_user.id)
+    profile = await get_profile_by_telegram_id(message.from_user.id)
+
+    user_info = (
+        f"✅ <b>Запрос на верификацию</b>\n\n"
+        f"👤 <b>Данные пользователя:</b>\n"
+        f"• Telegram ID: <code>{message.from_user.id}</code>\n"
+        f"• Username: @{message.from_user.username or '—'}\n"
+        f"• Имя: {message.from_user.first_name or '—'}\n"
+        f"• ID в БД: {user.id if user else '—'}\n"
+    )
+    if profile:
+        user_info += (
+            f"\n📝 <b>Анкета:</b>\n"
+            f"• Имя: {profile.name}\n"
+            f"• Возраст: {profile.age}\n"
+            f"• Пол: {profile.gender}\n"
+            f"• Ищет: {profile.looking_for}\n"
+            f"• Город: {profile.city}\n"
+            f"• Био: {profile.bio or '—'}\n"
+            f"• Фото в анкете: {len(profile.photos or [])}\n"
+            f"• Видео в анкете: {len(profile.videos or [])}\n"
+        )
+
+    admin_ids = config.admin_ids_list
+    for admin_id in admin_ids:
+        try:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="✅ Подтвердить", callback_data=f"verify_approve_{profile.id if profile else 0}")
+            builder.button(text="❌ Отклонить", callback_data=f"verify_reject_{profile.id if profile else 0}")
+            builder.adjust(1)
+
+            await message.bot.send_photo(
+                admin_id,
+                photo_id,
+                caption=user_info,
+                reply_markup=builder.as_markup(),
+            )
+        except Exception:
+            pass
+
     await message.answer(
         "✅ Фото отправлено на верификацию администратору. Ожидайте.",
         reply_markup=main_menu_keyboard(),

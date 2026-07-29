@@ -73,10 +73,10 @@ async def show_next_profile(callback: CallbackQuery):
         ad = ads[(count // config.swipe_before_ad - 1) % len(ads)]
         await increment_impression(ad.id)
         text = f"📢 Реклама\n\n{ad.text}\n\n---\n\n{profile_text}"
-        if photos:
-            await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
-        elif videos:
+        if videos:
             await callback.message.answer_video(videos[0], caption=text, reply_markup=kb)
+        elif photos:
+            await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
         else:
             await callback.message.answer(text, reply_markup=kb)
     else:
@@ -84,10 +84,10 @@ async def show_next_profile(callback: CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
-        if photos:
-            await callback.message.answer_photo(photos[0], caption=profile_text, reply_markup=kb)
-        elif videos:
+        if videos:
             await callback.message.answer_video(videos[0], caption=profile_text, reply_markup=kb)
+        elif photos:
+            await callback.message.answer_photo(photos[0], caption=profile_text, reply_markup=kb)
         else:
             await safe_edit(callback, profile_text, reply_markup=kb)
 
@@ -153,7 +153,9 @@ async def process_like(callback: CallbackQuery):
                 f"⚠️ Осталось {remaining} лайков на сегодня. ⭐ Премиум — без лимитов!",
             )
     elif result == "already_exists":
-        await callback.message.answer("❌ Вы уже оценили этого пользователя.")
+        await callback.answer("✅ Уже оценено", show_alert=False)
+        await show_next_profile(callback)
+        return
     elif result == "blocked":
         await callback.message.answer("❌ Невозможно: пользователь заблокирован.")
     elif result == "limit_exceeded":
@@ -163,6 +165,61 @@ async def process_like(callback: CallbackQuery):
         )
 
     await show_next_profile(callback)
+
+
+@router.callback_query(F.data.startswith("nlike_"))
+async def process_notification_like(callback: CallbackQuery):
+    await callback.answer()
+    target_id = int(callback.data.split("_")[1])
+
+    if await is_banned(callback.from_user.id):
+        await callback.message.answer("🚫 Вы забанены.")
+        return
+
+    can_like, _ = await check_like_limit(callback.from_user.id)
+    if not can_like:
+        await callback.message.edit_text(
+            "❌ У тебя закончились лайки на сегодня.\n"
+            "Оформи ⭐ Премиум или приведи друга!"
+        )
+        return
+
+    result = await like_profile(callback.from_user.id, target_id)
+
+    if result == "match":
+        target_user = await get_user_by_id(target_id)
+        my_user = await get_user_by_telegram_id(callback.from_user.id)
+        if target_user and my_user:
+            match_info = {"name": callback.from_user.first_name or "?", "age": 0, "city": "?"}
+            await notify_match(callback.bot, callback.from_user.id, target_user.telegram_id, match_info)
+        try:
+            await callback.message.edit_text("💕 Взаимная симпатия! Это совпадение!\nПосмотри свои совпадения в меню.")
+        except Exception:
+            await callback.message.answer("💕 Взаимная симпатия! Это совпадение!")
+    elif result == "liked":
+        try:
+            await callback.message.edit_text("✅ Ты ответил(а) взаимностью! Если человек тоже лайкнет — будет совпадение.")
+        except Exception:
+            await callback.message.answer("✅ Ты ответил(а) взаимностью!")
+    elif result == "already_exists":
+        await callback.answer("✅ Уже взаимно", show_alert=False)
+    elif result == "limit_exceeded":
+        await callback.message.answer(
+            "❌ Лимит лайков исчерпан.\n"
+            "Приведи друга или купи ⭐ Премиум!"
+        )
+
+
+@router.callback_query(F.data == "hide_notification")
+async def hide_notification(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        await callback.message.delete()
+    except Exception:
+        try:
+            await callback.message.edit_text("👋 Убрано.")
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("dislike_"))
@@ -254,7 +311,7 @@ async def process_superlike_message(message: Message, state: FSMContext):
             }
             await notify_superlike(message.bot, target_user.telegram_id, liker_data, liker_user_id=my_user.id)
     elif result == "already_exists":
-        await message.answer("❌ Вы уже отправили суперлайк этому пользователю.")
+        await message.answer("✅ Уже отправлено")
     elif result == "blocked":
         await message.answer("❌ Невозможно отправить суперлайк.")
     elif result == "limit_exceeded":

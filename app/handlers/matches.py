@@ -78,10 +78,10 @@ async def view_match(callback: CallbackQuery):
         await callback.message.delete()
     except Exception:
         pass
-    if photos:
-        await callback.message.answer_photo(photos[0], caption=text, reply_markup=builder.as_markup())
-    elif videos:
+    if videos:
         await callback.message.answer_video(videos[0], caption=text, reply_markup=builder.as_markup())
+    elif photos:
+        await callback.message.answer_photo(photos[0], caption=text, reply_markup=builder.as_markup())
     else:
         await safe_edit(callback, text, reply_markup=builder.as_markup())
 
