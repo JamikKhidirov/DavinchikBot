@@ -78,9 +78,9 @@ async def show_next_profile(callback: CallbackQuery):
         await increment_impression(ad.id)
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         ad_kb = None
-        if ad.button_text and ad.button_url:
+        if ad.button_url:
             ad_builder = InlineKeyboardBuilder()
-            ad_builder.button(text=ad.button_text, url=ad.button_url)
+            ad_builder.button(text=ad.button_text or "🔗 Перейти", url=ad.button_url)
             ad_kb = ad_builder.as_markup()
         if ad.photo_id:
             await callback.message.answer_photo(ad.photo_id, caption=ad.text, reply_markup=ad_kb)
@@ -192,11 +192,18 @@ async def process_like(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("nlike_"))
 async def process_notification_like(callback: CallbackQuery):
     await callback.answer()
-    target_id = int(callback.data.split("_")[1])
+    liker_telegram_id = int(callback.data.split("_")[1])
 
     if await is_banned(callback.from_user.id):
         await callback.message.answer("🚫 Вы забанены.")
         return
+
+    liker_user = await get_user_by_telegram_id(liker_telegram_id)
+    if liker_user is None:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    target_id = liker_user.id
 
     me = await get_user_by_telegram_id(callback.from_user.id)
     if me and me.id == target_id:
