@@ -76,7 +76,16 @@ async def show_next_profile(callback: CallbackQuery):
     if ads and count % config.swipe_before_ad == 0:
         ad = ads[(count // config.swipe_before_ad - 1) % len(ads)]
         await increment_impression(ad.id)
-        await callback.message.answer(ad.text)
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        ad_kb = None
+        if ad.button_text and ad.button_url:
+            ad_builder = InlineKeyboardBuilder()
+            ad_builder.button(text=ad.button_text, url=ad.button_url)
+            ad_kb = ad_builder.as_markup()
+        if ad.photo_id:
+            await callback.message.answer_photo(ad.photo_id, caption=ad.text, reply_markup=ad_kb)
+        else:
+            await callback.message.answer(ad.text, reply_markup=ad_kb)
 
     try:
         await callback.message.delete()
