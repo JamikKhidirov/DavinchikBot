@@ -291,15 +291,27 @@ async def ad_url_received(message: Message, state: FSMContext):
 
 async def save_ad(message: Message, state: FSMContext):
     from app.services.ad_service import create_ad
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
     data = await state.get_data()
-    await create_ad(
+    ad = await create_ad(
         photo_id=data.get("photo_id"),
         text=data["text"],
         button_text=data.get("button_text"),
         button_url=data.get("button_url"),
     )
     await state.clear()
-    await message.answer("✅ Реклама создана!", reply_markup=admin_keyboard())
+
+    preview_kb = None
+    if ad.button_url:
+        builder = InlineKeyboardBuilder()
+        builder.button(text=ad.button_text or "🔗 Перейти", url=ad.button_url)
+        preview_kb = builder.as_markup()
+
+    await message.answer("✅ Реклама создана! Вот как она будет выглядеть:", reply_markup=admin_keyboard())
+    if ad.photo_id:
+        await message.answer_photo(ad.photo_id, caption=ad.text, reply_markup=preview_kb)
+    else:
+        await message.answer(ad.text, reply_markup=preview_kb)
 
 
 @router.callback_query(F.data == "admin_list_ads")
@@ -384,15 +396,19 @@ async def ad_broadcast(callback: CallbackQuery):
 
     from app.services.notification_service import send_broadcast
     from app.services.profile_service import get_all_users
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     users = await get_all_users()
     active_users = [u.telegram_id for u in users if not u.is_banned]
 
     text = f"📢 Реклама\n\n{ad.text}"
-    if ad.button_text and ad.button_url:
-        text += f"\n\n{ad.button_text}: {ad.button_url}"
+    ad_kb = None
+    if ad.button_url:
+        builder = InlineKeyboardBuilder()
+        builder.button(text=ad.button_text or "🔗 Перейти", url=ad.button_url)
+        ad_kb = builder.as_markup()
 
-    success, failed = await send_broadcast(callback.bot, active_users, text=text, photo_id=ad.photo_id)
+    success, failed = await send_broadcast(callback.bot, active_users, text=text, photo_id=ad.photo_id, reply_markup=ad_kb)
     await safe_edit(callback,
         f"📨 Реклама #{ad_id} разослана!\n"
         f"✅ Отправлено: {success}\n"

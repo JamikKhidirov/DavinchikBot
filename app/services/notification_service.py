@@ -85,15 +85,15 @@ async def notify_superlike(bot: Bot, user_telegram_id: int, liker_profile: dict,
         pass
 
 
-async def send_broadcast(bot: Bot, user_ids: list[int], text: str, photo_id: str = None):
+async def send_broadcast(bot: Bot, user_ids: list[int], text: str, photo_id: str = None, reply_markup=None):
     success = 0
     failed = 0
     for uid in user_ids:
         try:
             if photo_id:
-                await bot.send_photo(uid, photo_id, caption=text)
+                await bot.send_photo(uid, photo_id, caption=text, reply_markup=reply_markup)
             else:
-                await bot.send_message(uid, text)
+                await bot.send_message(uid, text, reply_markup=reply_markup)
             success += 1
         except Exception:
             failed += 1
