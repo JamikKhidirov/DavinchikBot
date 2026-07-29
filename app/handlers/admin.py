@@ -458,7 +458,7 @@ async def ad_broadcast(callback: CallbackQuery):
     users = await get_all_users()
     active_users = [u.telegram_id for u in users if not u.is_banned]
 
-    text = f"📢 Реклама\n\n{ad.text}"
+    text = ad.text
     ad_kb = None
     if ad.button_url:
         builder = InlineKeyboardBuilder()
