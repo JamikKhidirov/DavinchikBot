@@ -60,6 +60,7 @@ def settings_keyboard(is_premium: bool = False) -> InlineKeyboardMarkup:
         builder.button(text="🚀 Буст анкеты", callback_data="boost_anketa")
     builder.button(text="🚫 Заблокированные", callback_data="blocked_list")
     builder.button(text="🎁 Мои подарки", callback_data="my_gifts")
+    builder.button(text="🛒 Магазин подарков", callback_data="gift_shop")
     builder.button(text="🔗 Реферальная ссылка", callback_data="referral")
     builder.button(text="📊 Статистика", callback_data="profile_stats")
     builder.button(text="🏠 На главную", callback_data="main_menu")
