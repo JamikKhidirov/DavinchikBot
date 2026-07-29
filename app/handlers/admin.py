@@ -22,10 +22,18 @@ router = Router()
 def admin_required(func):
     @wraps(func)
     async def wrapper(event, *args, **kwargs):
+        if isinstance(event, CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
         user_id = event.from_user.id if hasattr(event, 'from_user') else event.message.from_user.id
         if user_id not in config.admin_ids_list and not await is_admin(user_id):
             if isinstance(event, CallbackQuery):
-                await event.answer("Нет доступа", show_alert=True)
+                try:
+                    await event.answer("Нет доступа", show_alert=True)
+                except Exception:
+                    pass
             else:
                 await event.answer("🚫 У вас нет доступа к админ-панели.")
             return
