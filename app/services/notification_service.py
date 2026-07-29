@@ -4,15 +4,24 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 async def notify_match(bot: Bot, user1_telegram_id: int, user2_telegram_id: int, match_info: dict):
+    superlike_msg = match_info.get("superlike_message", "")
+    superlike_text1 = ""
+    superlike_text2 = ""
+    if superlike_msg:
+        superlike_text1 = f"\n\n⭐ Тебе отправили суперлайк с сообщением: {superlike_msg}"
+        superlike_text2 = f"\n\n⭐ Ты отправил(а) суперлайк с сообщением: {superlike_msg}"
+
     text1 = (
         f"💕 Взаимная симпатия!\n\n"
         f"Вы понравились {match_info['name2']}, {match_info['age2']} лет, {match_info['city2']}!\n"
         f"Напишите ей/ему: @{match_info['username2'] or 'пользователь не указал username'}"
+        f"{superlike_text1}"
     )
     text2 = (
         f"💕 Взаимная симпатия!\n\n"
         f"Вы понравились {match_info['name']}, {match_info['age']} лет, {match_info['city']}!\n"
         f"Напишите ей/ему: @{match_info['username'] or 'пользователь не указал username'}"
+        f"{superlike_text2}"
     )
 
     try:

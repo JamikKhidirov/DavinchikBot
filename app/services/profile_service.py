@@ -1,10 +1,10 @@
 import datetime
 from typing import Optional
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User, Profile, Like, Match
+from app.models import User, Profile, Like, Match, Message
 from app.database import async_session
 
 UTC = datetime.timezone.utc
@@ -320,3 +320,33 @@ async def increment_profile_views(owner_telegram_id: int):
         if profile:
             profile.views_count = (profile.views_count or 0) + 1
             await session.commit()
+
+
+async def delete_profile(telegram_id: int) -> bool:
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            return False
+
+        result = await session.execute(select(Profile).where(Profile.user_id == user.id))
+        profile = result.scalar_one_or_none()
+        if profile:
+            await session.delete(profile)
+
+        match_rows = await session.execute(
+            select(Match.id).where(or_(Match.user1_id == user.id, Match.user2_id == user.id))
+        )
+        match_ids = [row[0] for row in match_rows]
+
+        if match_ids:
+            await session.execute(delete(Message).where(Message.match_id.in_(match_ids)))
+        await session.execute(
+            delete(Match).where(or_(Match.user1_id == user.id, Match.user2_id == user.id))
+        )
+        await session.execute(
+            delete(Like).where(or_(Like.from_user_id == user.id, Like.to_user_id == user.id))
+        )
+
+        await session.commit()
+        return True

@@ -47,6 +47,8 @@ def edit_profile_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🎯 Интересы", callback_data="edit_interests")
     builder.button(text="📸 Фото", callback_data="edit_photos")
     builder.button(text="✅ Запросить верификацию", callback_data="request_verify")
+    builder.button(text="🗑 Удалить анкету", callback_data="delete_profile")
+    builder.button(text="🔄 Создать заново", callback_data="recreate_profile")
     builder.button(text="🏠 На главную", callback_data="main_menu")
     builder.adjust(2)
     return builder.as_markup()

@@ -11,6 +11,7 @@ from app.keyboards.profile import (
 from app.services.profile_service import (
     get_profile_by_telegram_id, update_profile, has_profile, is_banned,
     get_profile_stats, request_verification, get_user_by_telegram_id,
+    delete_profile,
 )
 from app.services.geo_service import update_location, update_search_radius
 from app.services.referral_service import get_or_create_referral_code, get_referral_stats, REFERRER_BONUS_LIKES, REFERRED_BONUS_LIKES
@@ -214,13 +215,17 @@ async def update_photos(message: Message, state: FSMContext):
 
     user_id = message.from_user.id
     if user_id not in media_storage:
-        media_storage[user_id] = {"photos": [], "videos": []}
+        profile = await get_profile_by_telegram_id(user_id)
+        media_storage[user_id] = {
+            "photos": list(profile.photos or []) if profile else [],
+            "videos": list(profile.videos or []) if profile else [],
+        }
 
     media_storage[user_id]["photos"].append(message.photo[-1].file_id)
     total = len(media_storage[user_id]["photos"]) + len(media_storage[user_id]["videos"])
 
     if total >= 3:
-        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"], videos=media_storage[user_id]["videos"])
+        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"][:3], videos=media_storage[user_id]["videos"][:3])
         media_storage.pop(user_id, None)
         await state.clear()
         await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
@@ -234,13 +239,17 @@ async def update_video(message: Message, state: FSMContext):
 
     user_id = message.from_user.id
     if user_id not in media_storage:
-        media_storage[user_id] = {"photos": [], "videos": []}
+        profile = await get_profile_by_telegram_id(user_id)
+        media_storage[user_id] = {
+            "photos": list(profile.photos or []) if profile else [],
+            "videos": list(profile.videos or []) if profile else [],
+        }
 
     media_storage[user_id]["videos"].append(message.video.file_id)
     total = len(media_storage[user_id]["photos"]) + len(media_storage[user_id]["videos"])
 
     if total >= 3:
-        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"], videos=media_storage[user_id]["videos"])
+        await update_profile(message.from_user.id, photos=media_storage[user_id]["photos"][:3], videos=media_storage[user_id]["videos"][:3])
         media_storage.pop(user_id, None)
         await state.clear()
         await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
@@ -253,8 +262,15 @@ async def done_update_photos(message: Message, state: FSMContext):
     from app.handlers.registration import media_storage
 
     user_id = message.from_user.id
-    data = media_storage.pop(user_id, {"photos": [], "videos": []})
-    await update_profile(message.from_user.id, photos=data["photos"], videos=data["videos"])
+    if user_id in media_storage:
+        data = media_storage.pop(user_id)
+    else:
+        profile = await get_profile_by_telegram_id(user_id)
+        data = {
+            "photos": list(profile.photos or []) if profile else [],
+            "videos": list(profile.videos or []) if profile else [],
+        }
+    await update_profile(message.from_user.id, photos=data["photos"][:3], videos=data["videos"][:3])
     await state.clear()
     await message.answer("✅ Медиа обновлены!", reply_markup=main_menu_keyboard())
 
@@ -547,6 +563,45 @@ async def show_referral_stats(callback: CallbackQuery):
 @router.callback_query(F.data == "copy_referral_link")
 async def copy_referral_link(callback: CallbackQuery):
     await callback.answer("Скопируйте ссылку из сообщения выше и отправьте другу!", show_alert=True)
+
+
+@router.callback_query(F.data == "delete_profile")
+async def confirm_delete_profile(callback: CallbackQuery):
+    await callback.answer()
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data="delete_confirm")
+    builder.button(text="❌ Нет, оставить", callback_data="my_profile")
+    await safe_edit(callback, "🗑 Ты уверен, что хочешь удалить анкету?\nВсе лайки и совпадения будут удалены.", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "delete_confirm")
+async def handle_delete_profile(callback: CallbackQuery):
+    await callback.answer()
+    await delete_profile(callback.from_user.id)
+    try:
+        await callback.message.edit_text("🗑 Анкета удалена. Чтобы создать новую, напиши /register", reply_markup=main_menu_keyboard())
+    except Exception:
+        await callback.message.answer("🗑 Анкета удалена. Чтобы создать новую, напиши /register", reply_markup=main_menu_keyboard())
+
+
+@router.callback_query(F.data == "recreate_profile")
+async def confirm_recreate_profile(callback: CallbackQuery):
+    await callback.answer()
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, создать заново", callback_data="recreate_confirm")
+    builder.button(text="❌ Нет, оставить", callback_data="my_profile")
+    await safe_edit(callback, "🔄 Вся анкета будет удалена и создана заново.\nТы уверен?", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "recreate_confirm")
+async def handle_recreate_profile(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await delete_profile(callback.from_user.id)
+    await state.clear()
+    from app.handlers.registration import cmd_register
+    await cmd_register(callback.message, state)
 
 
 @router.callback_query(F.data == "profile_stats")

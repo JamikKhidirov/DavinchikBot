@@ -54,6 +54,10 @@ async def show_next_profile(callback: CallbackQuery):
         await safe_edit(callback, "👀 Анкеты закончились. Попробуй изменить настройки поиска!", reply_markup=main_menu_keyboard())
         return
 
+    if profile_data.get("telegram_id") == callback.from_user.id:
+        await safe_edit(callback, "👀 Анкеты закончились. Попробуй изменить настройки поиска!", reply_markup=main_menu_keyboard())
+        return
+
     user_swipe_count[callback.from_user.id] = user_swipe_count.get(callback.from_user.id, 0) + 1
 
     verified_badge = "✅ Верифицирован(а)\n" if profile_data.get("is_verified") else ""
@@ -72,24 +76,49 @@ async def show_next_profile(callback: CallbackQuery):
     if ads and count % config.swipe_before_ad == 0:
         ad = ads[(count // config.swipe_before_ad - 1) % len(ads)]
         await increment_impression(ad.id)
-        text = f"📢 Реклама\n\n{ad.text}\n\n---\n\n{profile_text}"
-        if videos:
-            await callback.message.answer_video(videos[0], caption=text, reply_markup=kb)
-        elif photos:
-            await callback.message.answer_photo(photos[0], caption=text, reply_markup=kb)
-        else:
-            await callback.message.answer(text, reply_markup=kb)
+        await callback.message.answer(ad.text)
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    if videos:
+        await callback.message.answer_video(videos[0], caption=profile_text, reply_markup=kb)
+    elif photos:
+        await callback.message.answer_photo(photos[0], caption=profile_text, reply_markup=kb)
     else:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        if videos:
-            await callback.message.answer_video(videos[0], caption=profile_text, reply_markup=kb)
-        elif photos:
-            await callback.message.answer_photo(photos[0], caption=profile_text, reply_markup=kb)
-        else:
-            await safe_edit(callback, profile_text, reply_markup=kb)
+        await safe_edit(callback, profile_text, reply_markup=kb)
+
+
+async def _handle_match(callback_or_message, target_id: int, my_telegram_id: int, is_superlike: bool = False, superlike_msg: str = None):
+    target_user = await get_user_by_id(target_id)
+    my_user = await get_user_by_telegram_id(my_telegram_id)
+    my_profile = await get_profile_by_telegram_id(my_telegram_id)
+
+    if target_user and my_user and my_profile:
+        target_profile = await get_profile_by_telegram_id(target_user.telegram_id)
+        match_info = {
+            "name": my_profile.name,
+            "age": my_profile.age,
+            "city": my_profile.city,
+            "username": my_user.username or "",
+            "name2": target_profile.name if target_profile else "",
+            "age2": target_profile.age if target_profile else 0,
+            "city2": target_profile.city if target_profile else "",
+            "username2": target_user.username or "",
+            "superlike_message": superlike_msg or "",
+        }
+        bot = callback_or_message.bot if hasattr(callback_or_message, 'bot') else callback_or_message.bot
+        await notify_match(bot, my_telegram_id, target_user.telegram_id, match_info)
+
+    if hasattr(callback_or_message, 'message'):
+        await callback_or_message.message.answer(
+            "💕 Взаимная симпатия! Это совпадение!\nПосмотри свои совпадения в меню.",
+        )
+    else:
+        await callback_or_message.answer(
+            "💕 Взаимная симпатия! Это совпадение!\nПосмотри свои совпадения в меню.",
+        )
 
 
 @router.callback_query(F.data.startswith("like_"))
@@ -101,10 +130,16 @@ async def process_like(callback: CallbackQuery):
         await callback.message.answer("🚫 Вы забанены.")
         return
 
+    me = await get_user_by_telegram_id(callback.from_user.id)
+    if me and me.id == target_id:
+        await callback.answer("❌ Нельзя лайкнуть себя", show_alert=True)
+        await show_next_profile(callback)
+        return
+
     can_like, remaining = await check_like_limit(callback.from_user.id)
     if not can_like:
         await callback.message.answer(
-            "❌ Дневной лимит лайков исчерпан (30/30).\n"
+            "❌ Дневной лимит лайков исчерпан.\n"
             "Завтра лимит обновится. Оформи ⭐ Премиум для безлимитных лайков!",
         )
         return
@@ -112,45 +147,23 @@ async def process_like(callback: CallbackQuery):
     result = await like_profile(callback.from_user.id, target_id)
 
     if result == "match":
-        target_user = await get_user_by_id(target_id)
-        my_user = await get_user_by_telegram_id(callback.from_user.id)
-        my_profile = await get_profile_by_telegram_id(callback.from_user.id)
-
-        if target_user and my_user and my_profile:
-            target_profile = await get_profile_by_telegram_id(target_user.telegram_id)
-            match_info = {
-                "name": my_profile.name,
-                "age": my_profile.age,
-                "city": my_profile.city,
-                "username": my_user.username or "",
-                "name2": target_profile.name if target_profile else "",
-                "age2": target_profile.age if target_profile else 0,
-                "city2": target_profile.city if target_profile else "",
-                "username2": target_user.username or "",
-            }
-            await notify_match(callback.bot, callback.from_user.id, target_user.telegram_id, match_info)
-
-        await callback.message.answer(
-            "💕 Взаимная симпатия! Это совпадение!\n"
-            "Посмотри свои совпадения в меню.",
-        )
+        await _handle_match(callback, target_id, callback.from_user.id)
     elif result == "liked":
         target_user = await get_user_by_id(target_id)
-        my_profile = await get_profile_by_telegram_id(callback.from_user.id)
-        my_user = await get_user_by_telegram_id(callback.from_user.id)
-        if target_user and my_profile:
-            liker_data = {
-                "name": my_profile.name,
-                "age": my_profile.age,
-                "city": my_profile.city,
-                "bio": my_profile.bio or "",
-                "photos": my_profile.photos or [],
-            }
-            await notify_like(callback.bot, target_user.telegram_id, liker_data, liker_user_id=my_user.id)
-
-        if remaining and remaining <= 5:
-            await callback.message.answer(
-                f"⚠️ Осталось {remaining} лайков на сегодня. ⭐ Премиум — без лимитов!",
+        liker_profile = await get_profile_by_telegram_id(callback.from_user.id)
+        if target_user and liker_profile:
+            await notify_like(
+                callback.bot,
+                target_user.telegram_id,
+                {
+                    "name": liker_profile.name,
+                    "age": liker_profile.age,
+                    "city": liker_profile.city,
+                    "bio": liker_profile.bio,
+                    "photos": liker_profile.photos or [],
+                    "videos": liker_profile.videos or [],
+                },
+                liker_user_id=callback.from_user.id,
             )
     elif result == "already_exists":
         await callback.answer("✅ Уже оценено", show_alert=False)
@@ -176,12 +189,20 @@ async def process_notification_like(callback: CallbackQuery):
         await callback.message.answer("🚫 Вы забанены.")
         return
 
+    me = await get_user_by_telegram_id(callback.from_user.id)
+    if me and me.id == target_id:
+        await callback.answer("❌ Нельзя", show_alert=True)
+        return
+
     can_like, _ = await check_like_limit(callback.from_user.id)
     if not can_like:
-        await callback.message.edit_text(
-            "❌ У тебя закончились лайки на сегодня.\n"
-            "Оформи ⭐ Премиум или приведи друга!"
-        )
+        try:
+            await callback.message.edit_text(
+                "❌ У тебя закончились лайки на сегодня.\n"
+                "Оформи ⭐ Премиум или приведи друга!"
+            )
+        except Exception:
+            await callback.message.answer("❌ Лимит лайков исчерпан.")
         return
 
     result = await like_profile(callback.from_user.id, target_id)
@@ -189,8 +210,19 @@ async def process_notification_like(callback: CallbackQuery):
     if result == "match":
         target_user = await get_user_by_id(target_id)
         my_user = await get_user_by_telegram_id(callback.from_user.id)
-        if target_user and my_user:
-            match_info = {"name": callback.from_user.first_name or "?", "age": 0, "city": "?"}
+        my_profile = await get_profile_by_telegram_id(callback.from_user.id)
+        if target_user and my_user and my_profile:
+            target_profile = await get_profile_by_telegram_id(target_user.telegram_id)
+            match_info = {
+                "name": my_profile.name,
+                "age": my_profile.age,
+                "city": my_profile.city,
+                "username": my_user.username or "",
+                "name2": target_profile.name if target_profile else "",
+                "age2": target_profile.age if target_profile else 0,
+                "city2": target_profile.city if target_profile else "",
+                "username2": target_user.username or "",
+            }
             await notify_match(callback.bot, callback.from_user.id, target_user.telegram_id, match_info)
         try:
             await callback.message.edit_text("💕 Взаимная симпатия! Это совпадение!\nПосмотри свои совпадения в меню.")
@@ -198,9 +230,9 @@ async def process_notification_like(callback: CallbackQuery):
             await callback.message.answer("💕 Взаимная симпатия! Это совпадение!")
     elif result == "liked":
         try:
-            await callback.message.edit_text("✅ Ты ответил(а) взаимностью! Если человек тоже лайкнет — будет совпадение.")
+            await callback.message.edit_text("✅ Твой лайк отправлен! Если человек тоже лайкнет — будет совпадение.")
         except Exception:
-            await callback.message.answer("✅ Ты ответил(а) взаимностью!")
+            await callback.message.answer("✅ Лайк отправлен!")
     elif result == "already_exists":
         await callback.answer("✅ Уже взаимно", show_alert=False)
     elif result == "limit_exceeded":
@@ -231,6 +263,11 @@ async def process_dislike(callback: CallbackQuery):
         await callback.message.answer("🚫 Вы забанены.")
         return
 
+    me = await get_user_by_telegram_id(callback.from_user.id)
+    if me and me.id == target_id:
+        await show_next_profile(callback)
+        return
+
     await dislike_profile(callback.from_user.id, target_id)
     await show_next_profile(callback)
 
@@ -242,6 +279,13 @@ async def process_superlike_start(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("🚫 Вы забанены.")
         return
 
+    target_id = int(callback.data.split("_")[1])
+
+    me = await get_user_by_telegram_id(callback.from_user.id)
+    if me and me.id == target_id:
+        await callback.answer("❌ Нельзя суперлайкнуть себя", show_alert=True)
+        return
+
     can_like, remaining = await check_like_limit(callback.from_user.id)
     if not can_like:
         await callback.message.answer(
@@ -250,16 +294,15 @@ async def process_superlike_start(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    target_id = int(callback.data.split("_")[1])
     await state.set_state(SuperlikeMessage.text)
     await state.update_data(superlike_target_id=target_id)
     await safe_edit(callback,
-        "⭐ Суперлайк! Напиши короткое сообщение (оно будет отправлено анонимно):\n\n"
+        "⭐ Суперлайк! Напиши короткое сообщение (до 200 символов):\n\n"
         "(Или отправь '-' чтобы отправить без сообщения)"
     )
 
 
-@router.message(SuperlikeMessage.text)
+@router.message(SuperlikeMessage.text, F.text)
 async def process_superlike_message(message: Message, state: FSMContext):
     data = await state.get_data()
     target_id = data.get("superlike_target_id")
@@ -270,6 +313,8 @@ async def process_superlike_message(message: Message, state: FSMContext):
     msg_text = message.text.strip() if message.text else ""
     if msg_text == "-":
         msg_text = ""
+    if len(msg_text) > 200:
+        msg_text = msg_text[:200]
 
     if await is_banned(message.from_user.id):
         await message.answer("🚫 Вы забанены.")
@@ -279,37 +324,20 @@ async def process_superlike_message(message: Message, state: FSMContext):
     result = await like_profile(message.from_user.id, target_id, is_superlike=True, superlike_message=msg_text)
 
     if result == "match":
-        target_user = await get_user_by_id(target_id)
-        my_user = await get_user_by_telegram_id(message.from_user.id)
-        my_profile = await get_profile_by_telegram_id(message.from_user.id)
-        if target_user and my_user and my_profile:
-            target_profile = await get_profile_by_telegram_id(target_user.telegram_id)
-            match_info = {
-                "name": my_profile.name,
-                "age": my_profile.age,
-                "city": my_profile.city,
-                "username": my_user.username or "",
-                "name2": target_profile.name if target_profile else "",
-                "age2": target_profile.age if target_profile else 0,
-                "city2": target_profile.city if target_profile else "",
-                "username2": target_user.username or "",
-            }
-            await notify_match(message.bot, message.from_user.id, target_user.telegram_id, match_info)
-        await message.answer("💕 Взаимная симпатия! Это совпадение!")
+        await _handle_match(message, target_id, message.from_user.id, is_superlike=True, superlike_msg=msg_text)
     elif result == "liked":
         target_user = await get_user_by_id(target_id)
-        my_profile = await get_profile_by_telegram_id(message.from_user.id)
-        my_user = await get_user_by_telegram_id(message.from_user.id)
-        if target_user and my_profile:
-            liker_data = {
-                "name": my_profile.name,
-                "age": my_profile.age,
-                "city": my_profile.city,
-                "bio": my_profile.bio or "",
-                "photos": my_profile.photos or [],
-                "superlike_message": msg_text,
-            }
-            await notify_superlike(message.bot, target_user.telegram_id, liker_data, liker_user_id=my_user.id)
+        liker_profile = await get_profile_by_telegram_id(message.from_user.id)
+        if target_user and liker_profile:
+            await notify_superlike(
+                message.bot,
+                target_user.telegram_id,
+                {
+                    "superlike_message": msg_text,
+                },
+                liker_user_id=None,
+            )
+        await message.answer("✅ Суперлайк отправлен! Если человек тоже лайкнет — будет совпадение.")
     elif result == "already_exists":
         await message.answer("✅ Уже отправлено")
     elif result == "blocked":
@@ -327,6 +355,12 @@ async def process_superlike_message(message: Message, state: FSMContext):
     await show_next_profile(fake_cb)
 
 
+@router.message(SuperlikeMessage.text)
+async def process_superlike_non_text(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, отправь текстовое сообщение (или '-' чтобы пропустить).")
+    # State stays unchanged so they can try again
+
+
 @router.callback_query(F.data.startswith("block_"))
 async def process_block(callback: CallbackQuery):
     await callback.answer()
@@ -334,6 +368,11 @@ async def process_block(callback: CallbackQuery):
 
     if await is_banned(callback.from_user.id):
         await callback.message.answer("🚫 Вы забанены.")
+        return
+
+    me = await get_user_by_telegram_id(callback.from_user.id)
+    if me and me.id == target_id:
+        await show_next_profile(callback)
         return
 
     from app.services.block_service import block_user

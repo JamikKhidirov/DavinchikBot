@@ -143,6 +143,12 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
         blocked_by_me = select(Block.blocked_user_id).where(Block.user_id == user.id)
         blocked_me = select(Block.user_id).where(Block.blocked_user_id == user.id)
 
+        gender_filter = True
+        if my_profile.looking_for == "male":
+            gender_filter = Profile.gender == "male"
+        elif my_profile.looking_for == "female":
+            gender_filter = Profile.gender == "female"
+
         base_filters = [
             Profile.user_id != user.id,
             Profile.is_active == True,
@@ -152,6 +158,7 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             Profile.user_id.not_in(blocked_me),
             Profile.age >= my_profile.age_min_preference,
             Profile.age <= my_profile.age_max_preference,
+            gender_filter,
             or_(
                 Profile.looking_for == "all",
                 Profile.looking_for == my_profile.gender,
@@ -185,7 +192,7 @@ async def get_next_profile(telegram_id: int) -> Optional[dict]:
             candidates_list = list(candidates.scalars().all())
 
         if not candidates_list:
-            wider_filters = [Profile.is_active == True, Profile.user_id.not_in(blocked_by_me), Profile.user_id.not_in(blocked_me)]
+            wider_filters = [Profile.is_active == True, Profile.user_id != user.id, Profile.user_id.not_in(blocked_by_me), Profile.user_id.not_in(blocked_me)]
             candidates = await session.execute(
                 select(Profile)
                 .where(and_(*wider_filters))
