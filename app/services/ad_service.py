@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, delete, func
 
 from app.models import Advertisement
 from app.database import async_session
@@ -18,6 +18,31 @@ async def create_ad(photo_id: str = None, text: str = "", button_text: str = Non
         await session.commit()
         await session.refresh(ad)
         return ad
+
+
+async def update_ad(ad_id: int, **kwargs) -> Optional[Advertisement]:
+    async with async_session() as session:
+        result = await session.execute(select(Advertisement).where(Advertisement.id == ad_id))
+        ad = result.scalar_one_or_none()
+        if ad is None:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(ad, key):
+                setattr(ad, key, value)
+        await session.commit()
+        await session.refresh(ad)
+        return ad
+
+
+async def delete_ad(ad_id: int) -> bool:
+    async with async_session() as session:
+        result = await session.execute(select(Advertisement).where(Advertisement.id == ad_id))
+        ad = result.scalar_one_or_none()
+        if ad is None:
+            return False
+        await session.delete(ad)
+        await session.commit()
+        return True
 
 
 async def get_active_ads() -> list[Advertisement]:

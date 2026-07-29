@@ -285,33 +285,50 @@ async def ad_url_skip(message: Message, state: FSMContext):
 
 @router.message(AddAdvertisement.button_url)
 async def ad_url_received(message: Message, state: FSMContext):
-    await state.update_data(button_url=message.text)
+    url = message.text.strip()
+    if not url.startswith(("http://", "https://", "tg://")):
+        url = "https://" + url
+    await state.update_data(button_url=url)
     await save_ad(message, state)
 
 
 async def save_ad(message: Message, state: FSMContext):
-    from app.services.ad_service import create_ad
+    from app.services.ad_service import create_ad, update_ad
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     data = await state.get_data()
-    ad = await create_ad(
-        photo_id=data.get("photo_id"),
-        text=data["text"],
-        button_text=data.get("button_text"),
-        button_url=data.get("button_url"),
-    )
+    edit_ad_id = data.pop("edit_ad_id", None)
+
+    if edit_ad_id:
+        ad = await update_ad(
+            edit_ad_id,
+            text=data.get("text"),
+            photo_id=data.get("photo_id"),
+            button_text=data.get("button_text"),
+            button_url=data.get("button_url"),
+        )
+        action = "обновлена"
+    else:
+        ad = await create_ad(
+            photo_id=data.get("photo_id"),
+            text=data["text"],
+            button_text=data.get("button_text"),
+            button_url=data.get("button_url"),
+        )
+        action = "создана"
+
     await state.clear()
 
     preview_kb = None
-    if ad.button_url:
+    if ad and ad.button_url:
         builder = InlineKeyboardBuilder()
         builder.button(text=ad.button_text or "🔗 Перейти", url=ad.button_url)
         preview_kb = builder.as_markup()
 
-    await message.answer("✅ Реклама создана! Вот как она будет выглядеть:", reply_markup=admin_keyboard())
-    if ad.photo_id:
+    await message.answer(f"✅ Реклама #{ad.id} {action}! Вот как она выглядит:", reply_markup=admin_keyboard())
+    if ad and ad.photo_id:
         await message.answer_photo(ad.photo_id, caption=ad.text, reply_markup=preview_kb)
     else:
-        await message.answer(ad.text, reply_markup=preview_kb)
+        await message.answer(ad.text or "", reply_markup=preview_kb)
 
 
 @router.callback_query(F.data == "admin_list_ads")
@@ -366,6 +383,8 @@ async def ad_detail(callback: CallbackQuery):
         text="❌ Отключить" if ad.is_active else "✅ Включить",
         callback_data=f"ad_toggle_{ad.id}",
     )
+    builder.button(text="✏️ Редактировать", callback_data=f"ad_edit_{ad.id}")
+    builder.button(text="🗑 Удалить", callback_data=f"ad_delete_{ad.id}")
     builder.button(text="📨 Отправить всем", callback_data=f"ad_broadcast_{ad.id}")
     builder.button(text="🔙 Назад", callback_data="admin_list_ads")
     builder.adjust(1)
@@ -383,6 +402,44 @@ async def ad_toggle(callback: CallbackQuery):
         return
     status_text = "включена" if new_status else "отключена"
     await safe_edit(callback, f"✅ Реклама #{ad_id} {status_text}!", reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data.startswith("ad_edit_"))
+@admin_required
+async def ad_edit_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    ad_id = int(callback.data.replace("ad_edit_", ""))
+    ad = await get_ad_by_id(ad_id)
+    if ad is None:
+        return
+    await state.update_data(edit_ad_id=ad.id)
+    await state.set_state(AddAdvertisement.text)
+    await safe_edit(callback, f"✏️ Редактирование рекламы #{ad.id}\n\nТекущий текст: {ad.text}\n\nВведите новый текст:")
+
+
+@router.callback_query(F.data.startswith("ad_delete_"))
+@admin_required
+async def ad_delete_confirm(callback: CallbackQuery):
+    await callback.answer()
+    ad_id = int(callback.data.replace("ad_delete_", ""))
+    ad = await get_ad_by_id(ad_id)
+    if ad is None:
+        return
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"ad_delete_confirm_{ad_id}")
+    builder.button(text="❌ Нет", callback_data=f"ad_detail_{ad_id}")
+    await safe_edit(callback, f"🗑 Точно удалить рекламу #{ad_id}?\n\n{ad.text}", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("ad_delete_confirm_"))
+@admin_required
+async def ad_delete_execute(callback: CallbackQuery):
+    await callback.answer()
+    ad_id = int(callback.data.replace("ad_delete_confirm_", ""))
+    from app.services.ad_service import delete_ad
+    await delete_ad(ad_id)
+    await safe_edit(callback, f"✅ Реклама #{ad_id} удалена!", reply_markup=admin_keyboard())
 
 
 @router.callback_query(F.data.startswith("ad_broadcast_"))

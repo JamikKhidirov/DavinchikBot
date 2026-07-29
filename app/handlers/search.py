@@ -79,8 +79,11 @@ async def show_next_profile(callback: CallbackQuery):
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         ad_kb = None
         if ad.button_url:
+            url = ad.button_url
+            if not url.startswith(("http://", "https://", "tg://")):
+                url = "https://" + url
             ad_builder = InlineKeyboardBuilder()
-            ad_builder.button(text=ad.button_text or "🔗 Перейти", url=ad.button_url)
+            ad_builder.button(text=ad.button_text or "🔗 Перейти", url=url)
             ad_kb = ad_builder.as_markup()
         if ad.photo_id:
             await callback.message.answer_photo(ad.photo_id, caption=ad.text, reply_markup=ad_kb)

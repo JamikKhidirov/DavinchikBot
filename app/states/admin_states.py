@@ -9,6 +9,14 @@ class AddAdvertisement(StatesGroup):
     confirm = State()
 
 
+class EditAdvertisement(StatesGroup):
+    text = State()
+    photo = State()
+    button_text = State()
+    button_url = State()
+    confirm = State()
+
+
 class Broadcast(StatesGroup):
     text = State()
     photo = State()

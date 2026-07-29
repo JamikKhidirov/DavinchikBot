@@ -38,22 +38,38 @@ async def cmd_start(message: Message):
         result = await apply_referral(message.from_user.id, ref_code)
         if result == "ok":
             await message.answer(
-                "🎉 Вас пригласил друг! Вы получили бонусные лайки. "
+                "🎉 Вас пригласил друг! Вы получили +10 лайков и 7 дней ⭐ Премиум! "
                 "Приводите друзей и получайте ещё больше!"
             )
 
     await update_last_active(message.from_user.id)
 
+    bot_user = await message.bot.me()
+    user_code = (await get_or_create_user(
+        telegram_id=message.from_user.id,
+    )).referral_code
+    ref_link = f"https://t.me/{bot_user.username}?start=ref_{user_code}"
+
+    bonus_text = (
+        "\n\n🎁 <b>Бонусы за каждого друга:</b>\n"
+        "🔸 Тебе: +15 лайков + 7 дней ⭐ Премиум\n"
+        "🔸 Другу: +10 лайков + 7 дней ⭐ Премиум + 🏆 значок\n\n"
+        f"🔗 Твоя ссылка: <code>{ref_link}</code>\n"
+        "Просто отправь её другу!"
+    )
+
     if await has_profile(message.from_user.id):
         await message.answer(
             f"👋 С возвращением, {message.from_user.first_name}!\n\n"
-            f"🔍 Смотри анкеты, ставь лайки и находи пару!",
+            f"🔍 Смотри анкеты, ставь лайки и находи пару!"
+            f"{bonus_text}",
             reply_markup=main_menu_keyboard(),
         )
     else:
         await message.answer(
             "👋 Добро пожаловать в бот знакомств!\n\n"
             "Для начала нужно создать анкету. Нажми /register чтобы начать."
+            f"{bonus_text}"
         )
 
 
